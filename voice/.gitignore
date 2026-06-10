@@ -1,0 +1,22 @@
+# Entorno virtual
+mate-wakeword-env/
+
+# Modelos entrenados (binarios grandes → Git LFS si se quieren versionar)
+models/*.onnx
+models/*.tflite
+
+# Muestras de audio (pueden ser cientos de MB)
+samples/
+
+# Perfil de hablante (datos personales, no versionar)
+speaker_profile/
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Archivos temporales de audio
+*.wav
+*.mp3
+*.ogg
