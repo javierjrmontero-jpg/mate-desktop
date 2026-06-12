@@ -20,3 +20,6 @@ __pycache__/
 *.wav
 *.mp3
 *.ogg
+
+# Carpeta wakeword anidada (legado OneDrive — no versionar)
+wakeword/
