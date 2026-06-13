@@ -1,0 +1,2 @@
+# MATE Orb — dependencias adicionales
+PyQt6>=6.6.0
