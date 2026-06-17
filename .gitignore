@@ -2,3 +2,19 @@
 dist/
 src-tauri/target/
 mate.local.crt
+
+# MATE — archivos locales por dispositivo (nunca subir al repo)
+voice/.env
+voice/.mate_token
+voice/.mate_queue.json
+voice/.mate_reminders.json
+voice/.mate_notes.json
+voice/.spotify_cache
+voice/build/
+voice/dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+mate-wakeword-env/

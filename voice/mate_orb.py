@@ -30,8 +30,17 @@ except ImportError:
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — carga .env local si existe (portabilidad entre PCs)
 # ---------------------------------------------------------------------------
+_env_file = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(_env_file):
+    with open(_env_file, encoding="utf-8") as _ef:
+        for _line in _ef:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+
 MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
 ORB_SIZE   = 180
 TOKEN_FILE   = os.path.join(os.path.dirname(__file__), ".mate_token")
