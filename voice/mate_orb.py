@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import json
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -307,8 +308,8 @@ class VoiceWorker(QThread):
         if best_input is not None:
             sd.default.device = (best_input, sd.default.device[1])
 
-        openwakeword.utils.download_models()
-        ww   = WakeModel(inference_framework="onnx")
+        _ww_model = str(Path(__file__).parent / "models" / "oye_mate.onnx")
+        ww = WakeModel(wakeword_models=[_ww_model], inference_framework="onnx")
         stt  = faster_whisper.WhisperModel("medium", device="cpu", compute_type="int8")
 
         # TTS local (Windows SAPI — sin red, instantáneo)
@@ -322,7 +323,7 @@ class VoiceWorker(QThread):
 
         available = list(ww.models.keys()) if hasattr(ww, "models") else ["(desconocidos)"]
         logger.info(f"Wake words disponibles: {available}")
-        logger.info("MATE Orb listo — decí 'hey jarvis' o hacé clic en el orbe para activar")
+        logger.info("MATE Orb listo — decí 'oye MATE' o hacé clic en el orbe para activar")
         self.state_changed.emit(IDLE)
 
         SR, CHUNK = 16000, 1280
@@ -349,7 +350,7 @@ class VoiceWorker(QThread):
                         best = max(pred.values()) if pred else 0
                         if best > 0.02:
                             logger.debug(f"Wake scores: { {k: f'{v:.3f}' for k,v in pred.items() if v > 0.01} }")
-                        if any(v > 0.5 for v in pred.values()):
+                        if any(v > 0.90 for v in pred.values()):
                             logger.info("Wake word detectado")
                             break
                     if self._manual_trigger.is_set():
