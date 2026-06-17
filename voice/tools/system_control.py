@@ -973,6 +973,21 @@ def detect_and_execute(text: str) -> Optional[str]:
         from tools.messaging_tools import get_telegram_messages
         return get_telegram_messages()
 
+    # ── Ghost Operator — búsqueda en navegador (PRO) ─────────────────────────
+    m = re.search(r'\b(?:busc[aá]\s+en\s+el\s+navegador|abr[íi]\s+el\s+navegador\s+y\s+busc[aá])\s+(.+)', t)
+    if m:
+        from tools.ghost_operator import browser_search
+        return browser_search(m.group(1).strip())
+
+    # ── Briefing matutino (PRO) ───────────────────────────────────────────────
+    if re.search(r'\b(dame\s+(el\s+)?briefing|briefing\s+del\s+d[íi]a|resumen\s+de\s+la\s+ma[ñn]ana|c[oó]mo\s+est[aá]\s+el\s+d[íi]a|qu[eé]\s+tengo\s+hoy\s+en\s+la\s+agenda|resumen\s+diario)\b', t):
+        from tools.briefing_tools import get_morning_briefing
+        return get_morning_briefing()
+
+    if re.search(r'\b(estado\s+r[aá]pido|c[oó]mo\s+est[aá]\s+todo|estado\s+general|resumen\s+r[aá]pido)\b', t):
+        from tools.briefing_tools import get_quick_status
+        return get_quick_status()
+
     # ── Mensajería WhatsApp (PRO) ─────────────────────────────────────────────
     m = re.search(r'\b(?:mand[aá]|env[íi][aá])\s+(?:un?\s+)?(?:mensaje\s+)?(?:de\s+)?whatsapp\s+(?:al?\s+número\s+)?(\d+)?\s*[:\s]+(.+)', t)
     if m:

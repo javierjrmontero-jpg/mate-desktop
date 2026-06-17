@@ -62,7 +62,7 @@ a = Analysis(
         # PRO tools
         "tools.memory_tools", "tools.dev_agent_tools",
         "tools.ghost_operator", "tools.messaging_tools",
-        "tools.calendar_tools",
+        "tools.calendar_tools", "tools.briefing_tools",
         # Calendar (Google API — opcional, no falla si no está instalado)
         "google.oauth2", "google.oauth2.credentials",
         "google_auth_oauthlib", "google_auth_oauthlib.flow",
