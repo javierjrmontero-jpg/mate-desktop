@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-MATE Web Tools — F9
-Clima, noticias y búsqueda web. Todas las funciones retornan strings listos para TTS.
-Sin API keys requeridas.
+MATE Web Tools — F9/F10
+Clima, noticias, búsqueda web, YouTube y visión de pantalla.
+Todas las funciones retornan strings listos para TTS.
 """
 
 import logging
+import os
 import re
 from urllib.parse import quote_plus
 
@@ -176,3 +177,89 @@ def search_web(query: str) -> str:
     except Exception as e:
         logger.error(f"search_web: {e}")
         return f"Error al buscar '{query}'."
+
+
+# ─── YOUTUBE ──────────────────────────────────────────────────────────────────
+
+def open_youtube(query: str = "") -> str:
+    """Abre YouTube en el navegador default, con o sin búsqueda."""
+    import webbrowser
+    query = query.strip()
+    if not query:
+        webbrowser.open("https://www.youtube.com")
+        return "Abrí YouTube."
+    url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+    webbrowser.open(url)
+    return f"Buscando '{query}' en YouTube."
+
+
+# ─── VISIÓN DE PANTALLA ───────────────────────────────────────────────────────
+
+def describe_screen() -> str:
+    """
+    Captura la pantalla y pide a Claude Haiku que la describa.
+    Requiere ANTHROPIC_API_KEY como variable de entorno.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return (
+            "Para describir la pantalla necesito la variable "
+            "ANTHROPIC_API_KEY configurada."
+        )
+
+    # 1. Captura
+    try:
+        import pyautogui
+        import io
+        import base64
+        from PIL import Image
+
+        img = pyautogui.screenshot()
+        img.thumbnail((1280, 720), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        return f"No pude capturar la pantalla: {e}"
+
+    # 2. Descripción via Claude Haiku
+    try:
+        import requests as _req
+        resp = _req.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 256,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": b64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                "Describí brevemente qué hay en esta pantalla, en español. "
+                                "Sé conciso, máximo 3 oraciones."
+                            ),
+                        },
+                    ],
+                }],
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        return resp.json()["content"][0]["text"]
+    except Exception as e:
+        logger.error(f"describe_screen: {e}")
+        return f"No pude describir la pantalla: {e}"

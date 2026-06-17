@@ -595,10 +595,82 @@ def detect_and_execute(text: str) -> Optional[str]:
         from tools.web_tools import get_news
         return get_news()
 
+    # ── YouTube (antes de Spotify para capturar "X en YouTube") ──────────────
+    m = re.search(r'\b(?:reproducí|busc[aá](?:me)?|pon[eé]|mir[áa])\s+(.+?)\s+en youtube\b', t)
+    if m:
+        from tools.web_tools import open_youtube
+        return open_youtube(m.group(1).strip())
+
+    if re.search(r'\b(abr[íi]|abre|entr[áa])\s+(?:a\s+)?youtube\b', t):
+        from tools.web_tools import open_youtube
+        return open_youtube()
+
+    m = re.search(r'\bbusc[aá](?:me)?\s+en\s+youtube\s+(.+)', t)
+    if m:
+        from tools.web_tools import open_youtube
+        return open_youtube(m.group(1).strip())
+
+    # ── Spotify ───────────────────────────────────────────────────────────────
+    m = re.search(r'\b(?:reproducí|reprod[uú]ceme|pon[eé]|toc[aá])\s+(.+?)(?:\s+por favor|$)', t)
+    if m and not re.search(r'\b(youtube|yt|la ventana|chrome|app)\b', t):
+        from tools.spotify_tools import search_and_play
+        return search_and_play(m.group(1).strip())
+
+    if re.search(r'\b(paus[aá]( la música)?|stop( la música| spotify)?|para( la música)?)\b', t):
+        from tools.spotify_tools import stop_playback
+        return stop_playback()
+
+    if re.search(r'\b(siguiente( canci[oó]n)?|skip|salte[aá])\b', t) and not re.search(r'\b(ventana|paso|tema)\b', t):
+        from tools.spotify_tools import next_track
+        return next_track()
+
+    if re.search(r'\b(anterior|canci[oó]n anterior|volvé a la anterior)\b', t):
+        from tools.spotify_tools import previous_track
+        return previous_track()
+
+    if re.search(r'\b(qu[eé] (est[áa] sonando|suena|canci[oó]n (suena|es|est[áa]))|qu[eé] m[uú]sica|qu[eé] toca|qu[eé] est[áa] (tocando|reproduciendo))\b', t):
+        from tools.spotify_tools import now_playing
+        return now_playing()
+
+    # ── Visión de pantalla ────────────────────────────────────────────────────
+    if re.search(r'\b(qu[eé] hay en la pantalla|describi[r]? la pantalla|qu[eé] ves|mir[áa] la pantalla|analiz[aá] la pantalla|qu[eé] se ve)\b', t):
+        from tools.web_tools import describe_screen
+        return describe_screen()
+
     # ── Búsqueda web ──────────────────────────────────────────────────────────
     m = re.search(r'\b(?:busc[aá](?:me)?|buscar|qu[eé] es|qui[eé]n es|cu[áa]nto cuesta|c[oó]mo se hace|explic[aá]me|contame sobre)\s+(.+)', t)
     if m:
         from tools.web_tools import search_web
         return search_web(m.group(1).strip())
+
+    # ── Archivos y carpetas ───────────────────────────────────────────────────
+    if re.search(r'\b(list[aá]|qu[eé] hay en|mostr[aá] (el contenido|la carpeta))\b', t):
+        m = re.search(r'\b(?:list[aá]|qu[eé] hay en|mostr[aá](?:\s+(?:el contenido|la carpeta))?)\s+(?:la carpeta\s+)?(.+?)(?:\s+por favor|$)', t)
+        if m:
+            from tools.file_tools import list_directory
+            return list_directory(m.group(1).strip())
+
+    if re.search(r'\bleé\s+(?:el\s+)?archivo\s+', t):
+        m = re.search(r'\bleé\s+(?:el\s+)?archivo\s+(.+?)(?:\s+por favor|$)', t)
+        if m:
+            from tools.file_tools import read_file
+            return read_file(m.group(1).strip())
+
+    m = re.search(r'\bcre[aá](?:me)?\s+(?:una?\s+)?carpeta\s+(?:llamad[ao]\s+)?(.+?)(?:\s+en\s+(.+?))?(?:\s+por favor|$)', t)
+    if m:
+        folder = m.group(1).strip()
+        location = (m.group(2) or "escritorio").strip()
+        from tools.file_tools import create_directory, _resolve
+        return create_directory(str(_resolve(location) / folder))
+
+    m = re.search(r'\bcopi[aá](?:me)?\s+(.+?)\s+(?:a|hacia|en)\s+(.+?)(?:\s+por favor|$)', t)
+    if m and re.search(r'\b(copi[aá])\b', t):
+        from tools.file_tools import copy_file
+        return copy_file(m.group(1).strip(), m.group(2).strip())
+
+    m = re.search(r'\bmov[eé](?:me)?\s+(.+?)\s+(?:a|hacia)\s+(.+?)(?:\s+por favor|$)', t)
+    if m and re.search(r'\b(mov[eé])\b', t):
+        from tools.file_tools import move_file
+        return move_file(m.group(1).strip(), m.group(2).strip())
 
     return None  # → delegar al API de MATE
