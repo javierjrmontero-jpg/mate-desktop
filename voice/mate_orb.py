@@ -32,7 +32,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
 ORB_SIZE   = 180
-TOKEN_FILE = os.path.join(os.path.dirname(__file__), ".mate_token")
+TOKEN_FILE   = os.path.join(os.path.dirname(__file__), ".mate_token")
+CONV_TIMEOUT = 10.0   # segundos sin habla antes de cerrar la conversación automáticamente
 
 # ---------------------------------------------------------------------------
 # Estados del orbe
@@ -232,6 +233,7 @@ class VoiceWorker(QThread):
         self._manual_trigger = threading.Event()
         self._speaking_flag = threading.Event()
         self._conv_id  = None
+        self._barge_in = threading.Event()
 
     def stop(self):
         self._running = False
@@ -254,6 +256,23 @@ class VoiceWorker(QThread):
 
         import pyttsx3
         logger.info("Cargando modelos de voz…")
+
+        # Seleccionar dispositivo de entrada compatible (evitar WDM-KS)
+        devs = sd.query_devices()
+        best_input = None
+        for preferred in ["Windows WASAPI", "MME", "Windows DirectSound"]:
+            for i, api in enumerate(sd.query_hostapis()):
+                if preferred.lower() in api["name"].lower():
+                    idx = api["default_input_device"]
+                    if idx >= 0 and devs[idx]["max_input_channels"] > 0:
+                        best_input = idx
+                        logger.info(f"Audio input: {devs[idx]['name']} ({api['name']})")
+                        break
+            if best_input is not None:
+                break
+        if best_input is not None:
+            sd.default.device = (best_input, sd.default.device[1])
+
         openwakeword.utils.download_models()
         ww   = WakeModel(inference_framework="onnx")
         stt  = faster_whisper.WhisperModel("small", device="cpu", compute_type="int8")
@@ -273,20 +292,28 @@ class VoiceWorker(QThread):
         self.state_changed.emit(IDLE)
 
         SR, CHUNK = 16000, 1280
+        import queue as _queue
 
         while self._running:
-            # ── 1. Wake word o click ───────────────────────────────────────
+            # ── 1. Wake word o click (callback mode — compatible con WDM-KS) ─
             if self._manual_trigger.is_set():
-                # Activado por clic
                 self._manual_trigger.clear()
                 logger.info("Activado por clic")
             else:
-                with sd.InputStream(samplerate=SR, channels=1, dtype="int16", blocksize=CHUNK) as s:
+                ww_q = _queue.Queue()
+                def _ww_cb(indata, frames, t, status):
+                    ww_q.put(indata.copy())
+
+                with sd.InputStream(samplerate=SR, channels=1, dtype="int16",
+                                    blocksize=CHUNK, callback=_ww_cb):
                     while self._running and not self._manual_trigger.is_set():
-                        chunk, _ = s.read(CHUNK)
+                        try:
+                            chunk = ww_q.get(timeout=0.5)
+                        except _queue.Empty:
+                            continue
                         pred = ww.predict(chunk.flatten())
                         best = max(pred.values()) if pred else 0
-                        if best > 0.02:  # debug: mostrá scores bajos también
+                        if best > 0.02:
                             logger.debug(f"Wake scores: { {k: f'{v:.3f}' for k,v in pred.items() if v > 0.01} }")
                         if any(v > 0.5 for v in pred.values()):
                             logger.info("Wake word detectado")
@@ -297,61 +324,127 @@ class VoiceWorker(QThread):
             if not self._running:
                 break
 
-            # ── 2. Capturar habla ──────────────────────────────────────────
-            # Esperar si TTS aún está hablando (evita eco)
-            while self._speaking_flag.is_set() and self._running:
-                time.sleep(0.05)
-            self.state_changed.emit(LISTENING)
-            audio = self._capture(SR)
-            if audio is None:
-                self.state_changed.emit(IDLE)
-                continue
+            # ── Bucle de conversación continua ────────────────────────────
+            in_conv = True
+            while in_conv and self._running:
 
-            # ── 3. STT ────────────────────────────────────────────────────
-            self.state_changed.emit(PROCESSING)
-            text = self._transcribe(stt, audio)
-            if not text.strip():
-                self.state_changed.emit(IDLE)
-                continue
+                # ── 2. Capturar habla ──────────────────────────────────────
+                while self._speaking_flag.is_set() and self._running:
+                    time.sleep(0.05)
+                self.state_changed.emit(LISTENING)
+                audio = self._capture(SR, max_sec=CONV_TIMEOUT)
+                if audio is None:
+                    logger.info("Sin respuesta — fin de conversación")
+                    self.state_changed.emit(IDLE)
+                    in_conv = False
+                    break
 
-            self.transcript_ready.emit(text)
-            logger.info(f"STT: {text}")
+                # ── 3. STT ────────────────────────────────────────────────
+                self.state_changed.emit(PROCESSING)
+                text = self._transcribe(stt, audio)
+                if not text.strip():
+                    self.state_changed.emit(IDLE)
+                    in_conv = False
+                    break
 
-            # ── 4. MATE API ───────────────────────────────────────────────
-            reply = self._call_mate(text)
-            if not reply:
-                self.state_changed.emit(ERROR)
-                time.sleep(1.5)
-                self.state_changed.emit(IDLE)
-                continue
+                self.transcript_ready.emit(text)
+                logger.info(f"STT: {text}")
 
-            self.response_ready.emit(reply)
+                # Cierre explícito de conversación
+                if re.search(
+                    r'\b(adi[oó]s|hasta luego|chau|eso es todo|terminamos|listo gracias|hasta pronto)\b',
+                    text.lower()
+                ):
+                    self.state_changed.emit(SPEAKING)
+                    self._speak("Hasta luego.")
+                    self.state_changed.emit(IDLE)
+                    in_conv = False
+                    break
 
-            # ── 5. TTS ────────────────────────────────────────────────────
-            self.state_changed.emit(SPEAKING)
-            self._speak(reply)
-            self.state_changed.emit(IDLE)
+                # ── 4. Comandos locales de sistema (sin llamada al API) ───
+                try:
+                    import sys as _sys, os as _os
+                    _tools_dir = _os.path.join(_os.path.dirname(__file__), "tools")
+                    if _tools_dir not in _sys.path:
+                        _sys.path.insert(0, _os.path.dirname(__file__))
+                    from tools.system_control import detect_and_execute
+                    local_resp = detect_and_execute(text)
+                    if local_resp:
+                        logger.info(f"[LOCAL] {local_resp}")
+                        self.response_ready.emit(local_resp)
+                        self.state_changed.emit(SPEAKING)
+                        self._speak(local_resp)
+                        self._barge_in.clear()
+                        self.state_changed.emit(LISTENING)
+                        continue
+                except Exception as _e:
+                    logger.warning(f"System control error: {_e}")
+
+                # ── 5. MATE API ───────────────────────────────────────────
+                reply = self._call_mate(text)
+                if not reply:
+                    self.state_changed.emit(ERROR)
+                    time.sleep(1.5)
+                    self.state_changed.emit(IDLE)
+                    in_conv = False
+                    break
+
+                self.response_ready.emit(reply)
+
+                # ── 6. TTS ────────────────────────────────────────────────
+                self.state_changed.emit(SPEAKING)
+                self._speak(reply)
+
+                # Barge-in: usuario interrumpió → capturar de inmediato
+                if self._barge_in.is_set():
+                    logger.info("Barge-in — procesando nuevo input")
+                    self._barge_in.clear()
+                    continue   # vuelve a capturar sin wake word
+
+                # Sin interrupción: seguir en conversación
+                self.state_changed.emit(LISTENING)
 
     # --- helpers ------------------------------------------------------------
 
     def _capture(self, sr: int, silence_sec=1.0, max_sec=12.0):
+        """
+        Captura audio hasta detectar silencio post-habla.
+        max_sec: timeout antes de detectar voz (ej. 10s en modo conversación).
+        Una vez detectada voz, la captura continúa hasta silencio (no se corta por max_sec).
+        """
         import numpy as np
         import sounddevice as sd
+        import queue as _queue
         CHUNK = 1024
-        THRESHOLD = 250          # RMS para considerar "voz"
-        MIN_SPEECH_FRAMES = 4    # mínimo de frames con voz antes de empezar a medir silencio
-        silence_needed = int(silence_sec * sr / CHUNK)
-        max_frames     = int(max_sec     * sr / CHUNK)
+        THRESHOLD = 250
+        MIN_SPEECH_FRAMES = 4
+        silence_needed   = int(silence_sec * sr / CHUNK)
+        pre_speech_limit = int(max_sec     * sr / CHUNK)   # frames para timeout sin voz
+        hard_limit       = int(15.0        * sr / CHUNK)   # límite duro post-voz
+
+        cap_q = _queue.Queue()
+        def _cap_cb(indata, frames, t, status):
+            cap_q.put(indata.copy())
 
         silence = 0
         buf = []
         speech_frames = 0
+        total_frames  = 0
 
-        with sd.InputStream(samplerate=sr, channels=1, dtype="int16", blocksize=CHUNK) as s:
-            for _ in range(max_frames):
-                if not self._running:
-                    return None
-                chunk, _ = s.read(CHUNK)
+        with sd.InputStream(samplerate=sr, channels=1, dtype="int16",
+                            blocksize=CHUNK, callback=_cap_cb):
+            while self._running:
+                total_frames += 1
+                # Timeout si todavía no hay voz
+                if speech_frames < MIN_SPEECH_FRAMES and total_frames >= pre_speech_limit:
+                    break
+                # Límite duro una vez que hay voz (15s máx desde el inicio)
+                if speech_frames >= MIN_SPEECH_FRAMES and total_frames >= hard_limit:
+                    break
+                try:
+                    chunk = cap_q.get(timeout=1.0)
+                except _queue.Empty:
+                    continue
                 flat = chunk.flatten()
                 rms  = np.abs(flat).mean()
                 buf.append(flat.copy())
@@ -360,15 +453,12 @@ class VoiceWorker(QThread):
                     speech_frames += 1
                     silence = 0
                 elif speech_frames >= MIN_SPEECH_FRAMES:
-                    # Solo empieza a contar silencio DESPUÉS de haber detectado voz
                     silence += 1
                     if silence >= silence_needed:
                         break
-                # Si aún no detectó voz, sigue esperando (no cuenta silencio)
 
-        # Descartar si no hubo voz real
         if speech_frames < MIN_SPEECH_FRAMES:
-            logger.debug(f"Captura descartada: solo {speech_frames} frames de voz")
+            logger.debug(f"Captura descartada: {speech_frames} frames de voz")
             return None
 
         return np.concatenate(buf)
@@ -449,20 +539,72 @@ class VoiceWorker(QThread):
         if not text.strip():
             return
         self._stop_tts.clear()
-        self._speaking_flag.set()   # bloquea _capture durante TTS
+        self._barge_in.clear()
+        self._speaking_flag.set()
+
+        # Monitor de barge-in en hilo paralelo (detecta si el usuario habla durante TTS)
+        monitor = threading.Thread(target=self._barge_in_monitor, daemon=True)
+        monitor.start()
+
         try:
             tts = getattr(self, "_tts", None)
             if tts is None:
                 import pyttsx3
                 tts = pyttsx3.init()
                 tts.setProperty("rate", 165)
-            tts.say(text)
-            tts.runAndWait()
+
+            # Dividir en oraciones para poder interrumpir entre ellas
+            sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+            for sentence in sentences:
+                if self._stop_tts.is_set() or self._barge_in.is_set():
+                    logger.info("TTS interrumpido")
+                    break
+                if sentence.strip():
+                    tts.say(sentence.strip())
+                    tts.runAndWait()
         except Exception as e:
             logger.error(f"TTS error: {e}")
         finally:
-            time.sleep(0.3)          # buffer post-TTS antes de volver a escuchar
+            time.sleep(0.2)
             self._speaking_flag.clear()
+
+    def _barge_in_monitor(self):
+        """
+        Corre en hilo paralelo durante TTS.
+        Si detecta voz del usuario (RMS > umbral alto) por N frames consecutivos,
+        activa _barge_in para interrumpir la reproducción.
+        """
+        import numpy as np
+        import sounddevice as sd
+        import queue as _queue
+
+        BARGE_THRESHOLD = 600   # más alto que THRESHOLD de captura para evitar eco del TTS
+        CONFIRM_FRAMES  = 4     # frames consecutivos requeridos para confirmar intención
+
+        q = _queue.Queue()
+        def _cb(indata, frames, t, status):
+            q.put(indata.copy())
+
+        consecutive = 0
+        try:
+            with sd.InputStream(samplerate=16000, channels=1, dtype="int16",
+                                blocksize=1280, callback=_cb):
+                while self._speaking_flag.is_set() and self._running:
+                    try:
+                        chunk = q.get(timeout=0.4)
+                        rms = np.abs(chunk.flatten()).mean()
+                        if rms > BARGE_THRESHOLD:
+                            consecutive += 1
+                            if consecutive >= CONFIRM_FRAMES:
+                                logger.info(f"Barge-in confirmado (RMS {rms:.0f})")
+                                self._barge_in.set()
+                                return
+                        else:
+                            consecutive = max(0, consecutive - 1)
+                    except _queue.Empty:
+                        consecutive = 0
+        except Exception as e:
+            logger.debug(f"Barge-in monitor no disponible: {e}")
 
 
 # ---------------------------------------------------------------------------
