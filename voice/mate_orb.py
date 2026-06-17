@@ -32,7 +32,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Config — carga .env local si existe (portabilidad entre PCs)
 # ---------------------------------------------------------------------------
-_env_file = os.path.join(os.path.dirname(__file__), ".env")
+_exe_dir  = str(Path(sys.executable).parent) if getattr(sys, "frozen", False) else os.path.dirname(__file__)
+_env_file = os.path.join(_exe_dir, ".env")
 if os.path.exists(_env_file):
     with open(_env_file, encoding="utf-8") as _ef:
         for _line in _ef:
@@ -43,8 +44,8 @@ if os.path.exists(_env_file):
 
 MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
 ORB_SIZE   = 180
-TOKEN_FILE   = os.path.join(os.path.dirname(__file__), ".mate_token")
-NOTIFY_FILE  = os.path.join(os.path.dirname(__file__), ".mate_queue.json")
+TOKEN_FILE   = os.path.join(_exe_dir, ".mate_token")
+NOTIFY_FILE  = os.path.join(_exe_dir, ".mate_queue.json")
 CONV_TIMEOUT = 10.0   # segundos sin habla antes de cerrar la conversación automáticamente
 
 # ---------------------------------------------------------------------------
@@ -317,18 +318,26 @@ class VoiceWorker(QThread):
         if best_input is not None:
             sd.default.device = (best_input, sd.default.device[1])
 
-        _ww_model = str(Path(__file__).parent / "models" / "oye_mate.onnx")
+        _base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
+        _ww_model = str(_base / "models" / "oye_mate.onnx")
         ww = WakeModel(wakeword_models=[_ww_model], inference_framework="onnx")
         stt  = faster_whisper.WhisperModel("medium", device="cpu", compute_type="int8")
 
-        # TTS local (Windows SAPI — sin red, instantáneo)
-        self._tts = pyttsx3.init()
-        self._tts.setProperty("rate", 165)
-        for v in self._tts.getProperty("voices"):
-            if any(x in v.name.lower() for x in ["spanish", "helena", "sabina", "es-", "español"]):
-                self._tts.setProperty("voice", v.id)
-                logger.info(f"Voz TTS: {v.name}")
+        # TTS via win32com SAPI5 directo (más confiable en PyInstaller que pyttsx3)
+        import pythoncom
+        import win32com.client
+        pythoncom.CoInitialize()
+        _sapi = win32com.client.Dispatch("SAPI.SpVoice")
+        _sapi.Rate = 1   # rango -10..10, 1 = ligeramente más rápido que default
+        _voices = _sapi.GetVoices()
+        for _i in range(_voices.Count):
+            _v = _voices.Item(_i)
+            _desc = _v.GetDescription().lower()
+            if any(x in _desc for x in ["spanish", "helena", "sabina", "es-", "español"]):
+                _sapi.Voice = _v
+                logger.info(f"Voz TTS (SAPI): {_v.GetDescription()}")
                 break
+        self._sapi = _sapi
 
         available = list(ww.models.keys()) if hasattr(ww, "models") else ["(desconocidos)"]
         logger.info(f"Wake words disponibles: {available}")
@@ -347,6 +356,25 @@ class VoiceWorker(QThread):
 
         SR, CHUNK = 16000, 1280
         import queue as _queue
+        from math import gcd
+
+        # Detectar sample rate nativa del dispositivo (WASAPI puede no soportar 16kHz)
+        _dev_info  = sd.query_devices(sd.default.device[0])
+        NATIVE_SR  = int(_dev_info["default_samplerate"])
+        self._native_sr = NATIVE_SR  # accesible desde _barge_in_monitor
+        NATIVE_CHUNK = int(CHUNK * NATIVE_SR / SR)
+        if NATIVE_SR != SR:
+            logger.info(f"Dispositivo nativo: {NATIVE_SR} Hz — resampleando a {SR} Hz")
+
+        def _to_16k(data_int16):
+            """Resamplea int16 de NATIVE_SR a SR (16000). No-op si ya es 16kHz."""
+            if NATIVE_SR == SR:
+                return data_int16
+            from scipy.signal import resample_poly
+            g = gcd(SR, NATIVE_SR)
+            f = data_int16.astype("float32") / 32768.0
+            r = resample_poly(f, SR // g, NATIVE_SR // g)
+            return (r * 32768.0).clip(-32768, 32767).astype("int16")
 
         while self._running:
             # ── 1. Wake word o click (callback mode — compatible con WDM-KS) ─
@@ -358,14 +386,14 @@ class VoiceWorker(QThread):
                 def _ww_cb(indata, frames, t, status):
                     ww_q.put(indata.copy())
 
-                with sd.InputStream(samplerate=SR, channels=1, dtype="int16",
-                                    blocksize=CHUNK, callback=_ww_cb):
+                with sd.InputStream(samplerate=NATIVE_SR, channels=1, dtype="int16",
+                                    blocksize=NATIVE_CHUNK, callback=_ww_cb):
                     while self._running and not self._manual_trigger.is_set():
                         try:
                             chunk = ww_q.get(timeout=0.5)
                         except _queue.Empty:
                             continue
-                        pred = ww.predict(chunk.flatten())
+                        pred = ww.predict(_to_16k(chunk.flatten()))
                         best = max(pred.values()) if pred else 0
                         if best > 0.02:
                             logger.debug(f"Wake scores: { {k: f'{v:.3f}' for k,v in pred.items() if v > 0.01} }")
@@ -393,7 +421,7 @@ class VoiceWorker(QThread):
                 while self._speaking_flag.is_set() and self._running:
                     time.sleep(0.05)
                 self.state_changed.emit(LISTENING)
-                audio = self._capture(SR, max_sec=CONV_TIMEOUT)
+                audio = self._capture(SR, max_sec=CONV_TIMEOUT, native_sr=NATIVE_SR)
                 if audio is None:
                     logger.info("Sin respuesta — fin de conversación")
                     self.state_changed.emit(IDLE)
@@ -450,6 +478,22 @@ class VoiceWorker(QThread):
                     in_conv = False
                     break
 
+                # ── 5b. Dev Agent: ejecutar código si el API lo indica ────
+                # El API puede incluir [RUN_PY:código] para ejecución automática.
+                import re as _re
+                _run_match = _re.search(r'\[RUN_PY:(.+?)\]', reply, _re.DOTALL)
+                if _run_match:
+                    try:
+                        from tools.dev_agent_tools import run_python
+                        _code   = _run_match.group(1).strip()
+                        _result = run_python(_code)
+                        # Reemplazar el marcador por el resultado en la respuesta
+                        reply   = _re.sub(r'\[RUN_PY:.+?\]', _result, reply, flags=_re.DOTALL).strip()
+                        if not reply:
+                            reply = _result
+                    except Exception as _de:
+                        logger.warning(f"Dev Agent exec error: {_de}")
+
                 self.response_ready.emit(reply)
 
                 # ── 6. TTS ────────────────────────────────────────────────
@@ -467,7 +511,7 @@ class VoiceWorker(QThread):
 
     # --- helpers ------------------------------------------------------------
 
-    def _capture(self, sr: int, silence_sec=1.0, max_sec=12.0):
+    def _capture(self, sr: int, silence_sec=1.0, max_sec=12.0, native_sr: int = 0):
         """
         Captura audio hasta detectar silencio post-habla.
         max_sec: timeout antes de detectar voz (ej. 10s en modo conversación).
@@ -476,37 +520,48 @@ class VoiceWorker(QThread):
         import numpy as np
         import sounddevice as sd
         import queue as _queue
+        from math import gcd
+
+        nsr   = native_sr if native_sr > 0 else sr
         CHUNK = 1024
+        NATIVE_CHUNK = int(CHUNK * nsr / sr)
         THRESHOLD = 250
         MIN_SPEECH_FRAMES = 4
         silence_needed   = int(silence_sec * sr / CHUNK)
-        pre_speech_limit = int(max_sec     * sr / CHUNK)   # frames para timeout sin voz
-        hard_limit       = int(15.0        * sr / CHUNK)   # límite duro post-voz
+        pre_speech_limit = int(max_sec     * sr / CHUNK)
+        hard_limit       = int(15.0        * sr / CHUNK)
 
         cap_q = _queue.Queue()
         def _cap_cb(indata, frames, t, status):
             cap_q.put(indata.copy())
+
+        def _resample_cap(data_int16):
+            if nsr == sr:
+                return data_int16
+            from scipy.signal import resample_poly
+            g = gcd(sr, nsr)
+            f = data_int16.astype("float32") / 32768.0
+            r = resample_poly(f, sr // g, nsr // g)
+            return (r * 32768.0).clip(-32768, 32767).astype("int16")
 
         silence = 0
         buf = []
         speech_frames = 0
         total_frames  = 0
 
-        with sd.InputStream(samplerate=sr, channels=1, dtype="int16",
-                            blocksize=CHUNK, callback=_cap_cb):
+        with sd.InputStream(samplerate=nsr, channels=1, dtype="int16",
+                            blocksize=NATIVE_CHUNK, callback=_cap_cb):
             while self._running:
                 total_frames += 1
-                # Timeout si todavía no hay voz
                 if speech_frames < MIN_SPEECH_FRAMES and total_frames >= pre_speech_limit:
                     break
-                # Límite duro una vez que hay voz (15s máx desde el inicio)
                 if speech_frames >= MIN_SPEECH_FRAMES and total_frames >= hard_limit:
                     break
                 try:
                     chunk = cap_q.get(timeout=1.0)
                 except _queue.Empty:
                     continue
-                flat = chunk.flatten()
+                flat = _resample_cap(chunk.flatten())
                 rms  = np.abs(flat).mean()
                 buf.append(flat.copy())
 
@@ -531,12 +586,16 @@ class VoiceWorker(QThread):
             f32,
             language="es",
             beam_size=5,
-            initial_prompt="Instrucción para MATE, asistente personal en español.",
             condition_on_previous_text=False,
-            no_speech_threshold=0.6,
+            no_speech_threshold=0.5,
             temperature=0.0,
         )
-        return " ".join(s.text for s in segs).strip()
+        # Filtrar segmentos con baja confianza (hallucinations de Whisper)
+        parts = []
+        for s in segs:
+            if s.no_speech_prob < 0.5 and s.avg_logprob > -1.0:
+                parts.append(s.text)
+        return " ".join(parts).strip()
 
     def _call_mate(self, text: str) -> str:
         import requests, json
@@ -544,7 +603,18 @@ class VoiceWorker(QThread):
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.token}",
         }
-        voice_text = f"{text}\n[VOZ: respondé en 1-2 oraciones, sin markdown]"
+        # Inyectar contexto de memoria del usuario si existe
+        try:
+            import sys as _sys, os as _os
+            _tools_dir = _os.path.join(_os.path.dirname(__file__), "tools")
+            if _tools_dir not in _sys.path:
+                _sys.path.insert(0, _os.path.dirname(__file__))
+            from tools.memory_tools import get_context_summary
+            _ctx = get_context_summary()
+            _ctx_prefix = f"[Contexto del usuario: {_ctx}]\n" if _ctx else ""
+        except Exception:
+            _ctx_prefix = ""
+        voice_text = f"{_ctx_prefix}{text}\n[VOZ: respondé en 1-2 oraciones, sin markdown]"
         payload = {
             "messages": [{"role": "user", "content": voice_text}],
             "voice": True,
@@ -610,32 +680,44 @@ class VoiceWorker(QThread):
         self._speaking_flag.set()
 
         # Monitor de barge-in en hilo paralelo (detecta si el usuario habla durante TTS)
-        monitor = threading.Thread(target=self._barge_in_monitor, daemon=True)
+        monitor = threading.Thread(target=self._barge_in_monitor,
+                                    args=(getattr(self, "_native_sr", 16000),), daemon=True)
         monitor.start()
 
-        try:
-            tts = getattr(self, "_tts", None)
-            if tts is None:
-                import pyttsx3
-                tts = pyttsx3.init()
-                tts.setProperty("rate", 165)
+        SVSFlagsAsync       = 1
+        SVSFPurgeBeforeSpeak = 2
 
-            # Dividir en oraciones para poder interrumpir entre ellas
+        try:
+            sapi = getattr(self, "_sapi", None)
+            if sapi is None:
+                import pythoncom, win32com.client
+                pythoncom.CoInitialize()
+                sapi = win32com.client.Dispatch("SAPI.SpVoice")
+                self._sapi = sapi
+
             sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+            logger.info(f"TTS iniciando: {text[:60]}...")
             for sentence in sentences:
                 if self._stop_tts.is_set() or self._barge_in.is_set():
                     logger.info("TTS interrumpido")
+                    sapi.Speak("", SVSFlagsAsync | SVSFPurgeBeforeSpeak)
                     break
                 if sentence.strip():
-                    tts.say(sentence.strip())
-                    tts.runAndWait()
+                    sapi.Speak(sentence.strip(), SVSFlagsAsync)
+                    # Esperar a que termine, verificando barge-in cada 50ms
+                    while sapi.Status.RunningState == 2:
+                        if self._stop_tts.is_set() or self._barge_in.is_set():
+                            sapi.Speak("", SVSFlagsAsync | SVSFPurgeBeforeSpeak)
+                            break
+                        time.sleep(0.05)
+            logger.info("TTS completado")
         except Exception as e:
             logger.error(f"TTS error: {e}")
         finally:
             time.sleep(0.2)
             self._speaking_flag.clear()
 
-    def _barge_in_monitor(self):
+    def _barge_in_monitor(self, native_sr: int = 16000):
         """
         Corre en hilo paralelo durante TTS.
         Si detecta voz del usuario (RMS > umbral alto) por N frames consecutivos,
@@ -654,8 +736,8 @@ class VoiceWorker(QThread):
 
         consecutive = 0
         try:
-            with sd.InputStream(samplerate=16000, channels=1, dtype="int16",
-                                blocksize=1280, callback=_cb):
+            with sd.InputStream(samplerate=native_sr, channels=1, dtype="int16",
+                                blocksize=int(1280 * native_sr / 16000), callback=_cb):
                 while self._speaking_flag.is_set() and self._running:
                     try:
                         chunk = q.get(timeout=0.4)
@@ -836,10 +918,17 @@ class MateOrbWindow(QMainWindow):
 # Entry point
 # ---------------------------------------------------------------------------
 def main():
+    # Log a archivo junto al EXE (util en modo frozen donde no hay consola)
+    _log_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    _log_file = str(_log_dir / "mate.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
+        handlers=[
+            logging.FileHandler(_log_file, encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
     )
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)

@@ -80,8 +80,15 @@ APP_ALIASES: dict[str, str] = {
     "vs code":           "code.exe",
     "visual studio code": "code.exe",
     "visual studio":     "devenv.exe",
+    # Navegadores
+    "navegador":         "browser:",
+    "chrome":            "browser:chrome",
+    "google chrome":     "browser:chrome",
+    "firefox":           "browser:firefox",
+    "edge":              "browser:edge",
+    "microsoft edge":    "browser:edge",
     # Media
-    "spotify":           "spotify.exe",
+    "spotify":           "spotify:",
     "vlc":               "vlc.exe",
     "reproductor":       "wmplayer.exe",
     # Otros
@@ -98,10 +105,23 @@ def open_app(name: str) -> str:
     exe = APP_ALIASES.get(n)
     try:
         if exe:
-            subprocess.Popen(exe, shell=True)
+            if exe.startswith("browser:"):
+                import webbrowser
+                browser = exe.split(":", 1)[1]  # "" = default, "chrome", "edge", "firefox"
+                if browser:
+                    try:
+                        webbrowser.get(browser).open("about:newtab")
+                    except Exception:
+                        webbrowser.open("about:blank")
+                else:
+                    webbrowser.open("about:blank")
+            elif exe.endswith(":"):
+                import os
+                os.startfile(exe)
+            else:
+                subprocess.Popen(exe, shell=True)
             return f"Abriendo {name}."
         else:
-            # Intento genérico con Start
             subprocess.Popen(f'start "" "{name}"', shell=True)
             return f"Intentando abrir {name}."
     except Exception as e:
@@ -804,5 +824,202 @@ def detect_and_execute(text: str) -> Optional[str]:
     if re.search(r'\b(mis metas|cu[aá]les son mis metas|qu[eé] metas tengo|list[aá] (mis )?metas)\b', t):
         from tools.notes_tools import list_goals
         return list_goals()
+
+    # ── Memoria persistente (PRO) ─────────────────────────────────────────────
+    # "recuerda que mi nombre es Javier" / "anota que trabajo en IT"
+    m = re.search(r'\b(?:recuerda|anot[aá]|guard[aá])\s+que\s+(.+?)\s+es\s+(.+)', t)
+    if m:
+        from tools.memory_tools import remember
+        return remember(m.group(1).strip(), m.group(2).strip())
+
+    m = re.search(r'\b(?:recuerda|anot[aá]|guard[aá])\s+que\s+(?:me\s+llamo|mi\s+nombre\s+es)\s+(.+)', t)
+    if m:
+        from tools.memory_tools import remember
+        return remember("nombre", m.group(1).strip())
+
+    # "¿qué sabes de mí?" / "qué recuerdas"
+    if re.search(r'\b(qu[eé] (sabes|recuerdas|ten[eé]s anotado)|mis datos|qu[eé] s[eé] sobre m[íi]|lo que sab[eé]s)\b', t):
+        from tools.memory_tools import list_memories
+        return list_memories()
+
+    # "¿qué sabes de mi nombre?" / "recuérdame mi..."
+    m = re.search(r'\b(?:qu[eé] sabes de|recuérdame|cu[aá]l es mi)\s+(.+?)(?:\s*\?|$)', t)
+    if m and not re.search(r'\b(nombre de la canci[oó]n|de la app|del archivo)\b', t):
+        from tools.memory_tools import recall
+        return recall(m.group(1).strip())
+
+    # "olvida que / olvida mi nombre"
+    m = re.search(r'\b(?:olv[íi]da|borra (que|mi|el|la)?)\s+(.+)', t)
+    if m:
+        from tools.memory_tools import forget
+        return forget(m.group(m.lastindex).strip())
+
+    # ── Dev Agent (PRO) ───────────────────────────────────────────────────────
+    # "ejecutá el último script" / "corrí el script anterior"
+    if re.search(r'\b(ejecut[aá]|corr[íi])\s+(el\s+)?(último|anterior|último\s+script|script\s+anterior)\b', t):
+        from tools.dev_agent_tools import run_last_script
+        return run_last_script()
+
+    # "listá los scripts" / "qué scripts tengo"
+    if re.search(r'\b(list[aá]|qu[eé] (scripts|código|programas)\s+(guard[aé]|tengo))\b', t) and re.search(r'\bscripts?\b', t):
+        from tools.dev_agent_tools import list_scripts
+        return list_scripts()
+
+    # "abrí la carpeta de scripts"
+    if re.search(r'\b(abr[íi]|mostr[aá])\s+(la\s+)?carpeta\s+de\s+scripts?\b', t):
+        from tools.dev_agent_tools import open_scripts_folder
+        return open_scripts_folder()
+
+    # "ejecutá PowerShell [comando]"
+    m = re.search(r'\b(?:ejecut[aá]|corr[íi])\s+(?:en\s+)?powershell\s+(.+)', t)
+    if m:
+        from tools.dev_agent_tools import run_powershell
+        return run_powershell(m.group(1).strip())
+
+    # ── Ghost Operator (PRO) — control de teclado/mouse ──────────────────────
+    # Scroll
+    if re.search(r'\b(scrolle[aá]|hace\s+scroll|bajá\s+la\s+página|scroll\s+abajo)\b', t):
+        from tools.ghost_operator import scroll_down
+        return scroll_down()
+
+    if re.search(r'\b(scroll\s+arriba|subí\s+la\s+página|bajá\s+el\s+scroll)\b', t):
+        from tools.ghost_operator import scroll_up
+        return scroll_up()
+
+    # Portapapeles
+    if re.search(r'\b(copi[aá]\s+todo|seleccion[aá]\s+todo|ctrl\s*\+\s*a)\b', t):
+        from tools.ghost_operator import select_all
+        return select_all()
+
+    if re.search(r'\b(peg[aá](\s+eso)?|ctrl\s*\+\s*v)\b', t) and not re.search(r'\bspotify\b', t):
+        from tools.ghost_operator import paste
+        return paste()
+
+    if re.search(r'\b(copi[aá](\s+eso)?|ctrl\s*\+\s*c)\b', t) and not re.search(r'\barchivo\b', t):
+        from tools.ghost_operator import copy
+        return copy()
+
+    if re.search(r'\b(deshac[eé](\s+eso)?|ctrl\s*\+\s*z)\b', t):
+        from tools.ghost_operator import undo
+        return undo()
+
+    if re.search(r'\b(rehac[eé](\s+eso)?|ctrl\s*\+\s*y)\b', t):
+        from tools.ghost_operator import redo
+        return redo()
+
+    # Pestañas
+    if re.search(r'\b(nueva\s+pesta[ñn]a|abr[íi]\s+(una\s+)?pesta[ñn]a|ctrl\s*\+\s*t)\b', t):
+        from tools.ghost_operator import new_tab
+        return new_tab()
+
+    if re.search(r'\b(cerr[aá]\s+(esta\s+)?pesta[ñn]a|ctrl\s*\+\s*w)\b', t):
+        from tools.ghost_operator import close_tab
+        return close_tab()
+
+    if re.search(r'\b(re?abr[íi]\s+(la\s+)?pesta[ñn]a|pesta[ñn]a\s+cerrada)\b', t):
+        from tools.ghost_operator import reopen_tab
+        return reopen_tab()
+
+    if re.search(r'\b(siguiente\s+pesta[ñn]a|pesta[ñn]a\s+siguiente)\b', t):
+        from tools.ghost_operator import next_tab
+        return next_tab()
+
+    if re.search(r'\b(pesta[ñn]a\s+anterior|anterior\s+pesta[ñn]a)\b', t) and not re.search(r'\bcanci[oó]n\b', t):
+        from tools.ghost_operator import prev_tab
+        return prev_tab()
+
+    # Navegación
+    if re.search(r'\b(volv[eé]\s+atr[aá]s|page\s+back|nav[eé]g[aá]\s+atr[aá]s)\b', t):
+        from tools.ghost_operator import go_back
+        return go_back()
+
+    if re.search(r'\b(avanz[aá]|page\s+forward|nav[eé]g[aá]\s+adelante)\b', t) and not re.search(r'\b(pista|canci[oó]n)\b', t):
+        from tools.ghost_operator import go_forward
+        return go_forward()
+
+    if re.search(r'\b(recarg[aá]|refresc[aá]|f5|recarg[aá]\s+la\s+p[aá]gina)\b', t):
+        from tools.ghost_operator import refresh_page
+        return refresh_page()
+
+    # URL directa
+    m = re.search(r'\b(?:abr[íi]|ir?\s+[aá]|nav[eé]g[aá]\s+[aá])\s+(https?://\S+|www\.\S+)', t)
+    if m:
+        from tools.ghost_operator import navigate_to
+        return navigate_to(m.group(1).strip())
+
+    # Escritorio / pantalla
+    if re.search(r'\b(mostr[aá]\s+(el\s+)?escritorio|escritorio|win\s*\+\s*d)\b', t) and not re.search(r'\b(fondo|imagen)\b', t):
+        from tools.ghost_operator import show_desktop
+        return show_desktop()
+
+    if re.search(r'\b(bloqu[eé][aá]\s+(la\s+)?pantalla|bloqu[eé][aá]\s+(la\s+)?pc|bloqueo)\b', t):
+        from tools.ghost_operator import lock_screen
+        return lock_screen()
+
+    # Escribir texto (Ghost)
+    m = re.search(r'\b(?:escrib[íi]|tip[eé][aá]|ingres[aá])\s+(?:el\s+texto\s+)?["""]?(.+?)["""]?(?:\s+por\s+favor|$)', t)
+    if m and not re.search(r'\b(nota|recordatorio|meta)\b', t):
+        from tools.ghost_operator import type_text
+        return type_text(m.group(1).strip())
+
+    # ── Mensajería Telegram (PRO) ─────────────────────────────────────────────
+    # "mandá un mensaje por telegram que..."  /  "telegram: ..."
+    m = re.search(r'\b(?:mand[aá]|env[íi][aá]|decile)\s+(?:un?\s+mensaje\s+)?(?:por\s+)?telegram[:\s]+(.+)', t)
+    if m:
+        from tools.messaging_tools import send_telegram
+        return send_telegram(m.group(1).strip())
+
+    if re.search(r'\b(mensajes\s+de\s+telegram|qu[eé]\s+(me\s+)?lleg[oó]\s+por\s+telegram|telegram\s+nuevos)\b', t):
+        from tools.messaging_tools import get_telegram_messages
+        return get_telegram_messages()
+
+    # ── Mensajería WhatsApp (PRO) ─────────────────────────────────────────────
+    m = re.search(r'\b(?:mand[aá]|env[íi][aá])\s+(?:un?\s+)?(?:mensaje\s+)?(?:de\s+)?whatsapp\s+(?:al?\s+número\s+)?(\d+)?\s*[:\s]+(.+)', t)
+    if m:
+        from tools.messaging_tools import send_whatsapp
+        number  = (m.group(1) or "").strip()
+        message = m.group(2).strip()
+        return send_whatsapp(message, number)
+
+    m = re.search(r'\b(?:mand[aá]|env[íi][aá])\s+(?:por\s+)?whatsapp[:\s]+(.+)', t)
+    if m:
+        from tools.messaging_tools import send_whatsapp
+        return send_whatsapp(m.group(1).strip())
+
+    # ── Calendario / Agenda (PRO) ─────────────────────────────────────────────
+    # "qué tengo hoy" / "mis eventos de hoy"
+    if re.search(r'\b(qu[eé]\s+tengo\s+(hoy|para\s+hoy)|eventos\s+de\s+hoy|agenda\s+de\s+hoy|mi\s+agenda\s+hoy)\b', t):
+        from tools.calendar_tools import get_today_events
+        return get_today_events()
+
+    # "qué tengo esta semana" / "agenda de la semana"
+    if re.search(r'\b(qu[eé]\s+tengo\s+(esta|la)\s+semana|eventos\s+de\s+(esta|la)\s+semana|agenda\s+(semanal|de\s+(esta|la)\s+semana))\b', t):
+        from tools.calendar_tools import get_week_events
+        return get_week_events()
+
+    # "agendá X" / "crea un evento" / "agregame a la agenda"
+    m = re.search(r'\b(?:agend[aá](?:me)?|cre[aá]\s+(?:un\s+)?evento|agreg[aá](?:me)?\s+(?:a\s+(?:la\s+)?agenda))\s+(.+)', t)
+    if m:
+        raw = m.group(1).strip()
+        # Intentar extraer hora: "a las 15:00" / "a las 3"
+        time_match = re.search(r'a\s+las?\s+(\d{1,2}(?:[:h]\d{2})?)', raw)
+        time_hint  = time_match.group(1) if time_match else ""
+        # Intentar extraer fecha: "el lunes" / "mañana" / "el 20/06"
+        date_match = re.search(r'\b(ma[ñn]ana|pasado|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|\d{1,2}/\d{1,2}(?:/\d{4})?)\b', raw)
+        date_hint  = date_match.group(1) if date_match else ""
+        # Título = raw sin las partes de fecha/hora
+        title = re.sub(r'\b(a\s+las?\s+\d{1,2}(?:[:h]\d{2})?)\b', '', raw)
+        title = re.sub(r'\b(ma[ñn]ana|pasado|el\s+lunes|el\s+martes|el\s+mi[eé]rcoles|el\s+jueves|el\s+viernes|el\s+s[aá]bado|el\s+domingo|\d{1,2}/\d{1,2}(?:/\d{4})?)\b', '', title)
+        title = re.sub(r'\s{2,}', ' ', title).strip()
+        if not title:
+            title = raw
+        from tools.calendar_tools import create_event
+        return create_event(title, date_hint, time_hint)
+
+    # "borrá el evento X" / "eliminá de la agenda X"
+    m = re.search(r'\b(?:borr[aá]|elimin[aá])\s+(?:el\s+)?(?:evento\s+|de\s+la\s+agenda\s+)?(.+)', t)
+    if m and re.search(r'\b(evento|agenda|reuni[oó]n|cita)\b', t):
+        from tools.calendar_tools import delete_event
+        return delete_event(m.group(1).strip())
 
     return None  # → delegar al API de MATE

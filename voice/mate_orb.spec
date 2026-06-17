@@ -1,111 +1,79 @@
-# mate_orb.spec — PyInstaller spec para empaquetar MATE como EXE standalone
-#
-# Uso (desde voice/ con el venv activo):
-#   pip install pyinstaller
-#   pyinstaller mate_orb.spec
-#
-# Output: dist/MATE/MATE.exe  +  todas las DLLs necesarias
-# Tamaño estimado: 400-700 MB (incluye Python runtime + modelos)
-#
-# IMPORTANTE: El modelo STT (Whisper medium, ~1.5 GB) NO se incluye en el EXE.
-# Se descarga una vez en el primer arranque a %USERPROFILE%\.cache\huggingface\
-# Para pre-bundlear el modelo, ver comentario en la sección datas.
-
+# mate_orb.spec
 block_cipher = None
 
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 
-# Rutas
 VOICE_DIR  = Path(SPECPATH)
 TOOLS_DIR  = VOICE_DIR / "tools"
 MODELS_DIR = VOICE_DIR / "models"
 
+# Recolectar paquetes con dependencias internas complejas
+# en lugar de adivinar submodulos manualmente.
+ow_datas,  ow_bins,  ow_hidden  = collect_all("openwakeword")
+sp_hidden                        = collect_submodules("scipy")
+sk_hidden                        = collect_submodules("sklearn")
+
 a = Analysis(
     [str(VOICE_DIR / "mate_orb.py")],
     pathex=[str(VOICE_DIR)],
-    binaries=[],
+    binaries=ow_bins,
     datas=[
-        # Modelo de wake word custom — obligatorio
         (str(MODELS_DIR / "oye_mate.onnx"), "models"),
-
-        # Archivos de tools
         (str(TOOLS_DIR / "*.py"), "tools"),
-
-        # Template de configuración
         (str(VOICE_DIR / ".env.example"), "."),
-
-        # Sonidos del sistema — fallback si Windows Media no está disponible
-        # (str(VOICE_DIR / "sounds"), "sounds"),
-
-        # Para pre-bundlear Whisper medium (descomenta y ajusta la ruta):
-        # (r"C:\Users\jmontero\.cache\huggingface\hub\models--Systran--faster-whisper-medium",
-        #  r"huggingface\hub\models--Systran--faster-whisper-medium"),
+        *ow_datas,
     ],
     hiddenimports=[
+        *ow_hidden,
+        *sp_hidden,
+        *sk_hidden,
         # Qt
-        "PyQt6.QtCore",
-        "PyQt6.QtWidgets",
-        "PyQt6.QtGui",
-        "PyQt6.sip",
+        "PyQt6.QtCore", "PyQt6.QtWidgets", "PyQt6.QtGui", "PyQt6.sip",
         # Audio
-        "sounddevice",
-        "numpy",
-        # Wake word
-        "openwakeword",
-        "openwakeword.model",
-        "openwakeword.utils",
-        "onnxruntime",
-        # STT
-        "faster_whisper",
-        "ctranslate2",
+        "sounddevice", "numpy",
+        # STT / wake word
+        "faster_whisper", "ctranslate2",
+        "onnxruntime", "onnxruntime.capi",
+        "onnxruntime.capi.onnxruntime_inference_collection",
         # TTS
-        "pyttsx3",
-        "pyttsx3.drivers",
-        "pyttsx3.drivers.sapi5",
+        "pyttsx3", "pyttsx3.drivers", "pyttsx3.drivers.sapi5",
+        "win32com", "win32com.client", "pythoncom",
         # Windows
-        "win32gui",
-        "win32con",
-        "win32api",
-        "pywintypes",
-        "comtypes",
-        "comtypes.client",
-        "pycaw",
-        "pycaw.pycaw",
-        # System control
-        "pyautogui",
-        "pygetwindow",
-        "screen_brightness_control",
+        "win32gui", "win32con", "win32api", "win32process",
+        "pywintypes", "winreg", "winsound",
+        "comtypes", "comtypes.client",
+        "pycaw", "pycaw.pycaw",
+        # System
+        "pyautogui", "pygetwindow", "pygetwindow._pygetwindow_win",
+        "screen_brightness_control", "screen_brightness_control.windows",
         "psutil",
-        # Imagen / visión
-        "PIL",
-        "PIL.Image",
-        "PIL.ImageGrab",
-        # Web tools
-        "requests",
-        "feedparser",
-        "duckduckgo_search",
+        # PIL
+        "PIL", "PIL.Image", "PIL.ImageGrab",
+        # Web / feeds
+        "requests", "feedparser", "duckduckgo_search",
         # Spotify
-        "spotipy",
-        "spotipy.oauth2",
-        # Notes / reminders
-        "json",
-        "pathlib",
+        "spotipy", "spotipy.oauth2", "spotipy.util",
+        # Tools (imports lazy — PyInstaller no los detecta)
+        "tools", "tools.system_control", "tools.web_tools",
+        "tools.spotify_tools", "tools.file_tools",
+        "tools.notes_tools", "tools.reminder_tools",
+        # PRO tools
+        "tools.memory_tools", "tools.dev_agent_tools",
+        "tools.ghost_operator", "tools.messaging_tools",
+        "tools.calendar_tools",
+        # Calendar (Google API — opcional, no falla si no está instalado)
+        "google.oauth2", "google.oauth2.credentials",
+        "google_auth_oauthlib", "google_auth_oauthlib.flow",
+        "google.auth.transport.requests",
+        "googleapiclient", "googleapiclient.discovery",
+        # Stdlib que PyInstaller puede omitir en windowed mode
+        "webbrowser", "base64", "urllib.parse", "queue", "shutil",
     ],
     hookspath=[],
-    hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        "tkinter",
-        "matplotlib",
-        "IPython",
-        "jupyter",
-        "scipy",          # pesado, no requerido en runtime
-        "sklearn",
-        "torch",          # si resemblyzer no se incluye en el exe
-    ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
+    excludes=["tkinter", "matplotlib", "IPython", "jupyter", "torch"],
     cipher=block_cipher,
     noarchive=False,
 )
@@ -113,29 +81,18 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
-    pyz,
-    a.scripts,
-    [],
+    pyz, a.scripts, [],
     exclude_binaries=True,
     name="MATE",
     debug=False,
-    bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,          # sin ventana negra de consola
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=None,              # reemplazar con "mate_icon.ico" si existe
+    console=False,
+    icon=None,
 )
 
 coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
+    exe, a.binaries, a.zipfiles, a.datas,
     strip=False,
     upx=True,
     upx_exclude=[],
