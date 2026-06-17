@@ -21,6 +21,7 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import json
 import requests
 
 # ─── Configuración ────────────────────────────────────────────────────────────
@@ -30,10 +31,31 @@ MATE_PASSWORD = "Tomy#6358"
 TTS_VOICE     = "es-AR-ElenaNeural"
 VERIFY_SSL    = False
 
+ORBE_QUEUE_FILE = Path(__file__).parent / ".mate_queue.json"
 POLL_INTERVAL       = 300    # segundos entre chequeos (5 min)
 EVENT_WARN_MINUTES  = 15     # avisar X minutos antes de un evento
 EMAIL_COOLDOWN      = 600    # no volver a anunciar emails por X segundos
 # ──────────────────────────────────────────────────────────────────────────────
+
+def push_to_orb(message: str) -> None:
+    """Encola un mensaje para que el orbe lo anuncie por TTS cuando esté disponible."""
+    try:
+        queue: list = []
+        if ORBE_QUEUE_FILE.exists():
+            try:
+                queue = json.loads(ORBE_QUEUE_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                queue = []
+        if not isinstance(queue, list):
+            queue = []
+        queue.append(message)
+        ORBE_QUEUE_FILE.write_text(
+            json.dumps(queue, ensure_ascii=False, indent=None),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"   [orbe] No se pudo encolar notificación: {e}")
+
 
 _token: str | None = None
 _last_unread_count: int | None = None
@@ -159,6 +181,7 @@ def check_emails() -> None:
             print(f"📧 {msg}")
             notify_windows("MATE — Email nuevo", f"{new_count} email{'s' if new_count>1 else ''}")
             speak(msg)
+            push_to_orb(msg)
             _last_email_announce = now
 
         _last_unread_count = count
@@ -212,6 +235,7 @@ def check_calendar() -> None:
                 print(f"📅 {msg}")
                 notify_windows("MATE — Recordatorio", f"En {mins}min: {summary}")
                 speak(msg)
+                push_to_orb(msg)
                 _announced_events.add(ev_id)
 
     except Exception as e:
@@ -249,6 +273,7 @@ def check_followups() -> None:
             print(f"📬 {msg}")
             notify_windows("MATE — Seguimiento", f"{hours}h sin respuesta: {subject[:40]}")
             speak(msg)
+            push_to_orb(msg)
             _announced_events.add(followup_id)
 
     except Exception as e:
@@ -373,6 +398,7 @@ def check_rules() -> None:
 
         if atype == "tts":
             speak(msg)
+            push_to_orb(msg)
 
         elif atype == "notify":
             title = aparams.get("title", "MATE — Alerta")

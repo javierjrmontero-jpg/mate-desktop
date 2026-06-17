@@ -12,6 +12,7 @@ import time
 import logging
 import os
 import re
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ except ImportError:
 MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
 ORB_SIZE   = 180
 TOKEN_FILE   = os.path.join(os.path.dirname(__file__), ".mate_token")
+NOTIFY_FILE  = os.path.join(os.path.dirname(__file__), ".mate_queue.json")
 CONV_TIMEOUT = 10.0   # segundos sin habla antes de cerrar la conversación automáticamente
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,7 @@ LISTENING  = "listening"
 PROCESSING = "processing"
 SPEAKING   = "speaking"
 ERROR      = "error"
+ALERT      = "alert"    # notificación proactiva entrante
 
 # ---------------------------------------------------------------------------
 # OrbWidget — canvas animado
@@ -85,6 +88,7 @@ class OrbWidget(QWidget):
         elif self._state == PROCESSING: self._processing(p, cx, cy, r, f)
         elif self._state == SPEAKING:   self._speaking(p, cx, cy, r, f)
         elif self._state == ERROR:      self._error(p, cx, cy, r, f)
+        elif self._state == ALERT:      self._alert(p, cx, cy, r, f)
         p.end()
 
     # --- paint states -------------------------------------------------------
@@ -199,6 +203,36 @@ class OrbWidget(QWidget):
         p.setBrush(QBrush(g)); p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(cx - cr, cy - cr, cr * 2, cr * 2)
 
+    def _alert(self, p, cx, cy, r, f):
+        """Ámbar pulsante — notificación proactiva entrante."""
+        pulse = 0.80 + 0.20 * abs(math.sin(f * 0.11))
+        cr = int(r * pulse)
+
+        # Anillo exterior ámbar
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for i in range(2):
+            age = (f * 4 + i * 50) % 100
+            wr  = int(r * (0.90 + age * 0.008))
+            alpha = max(0, int(170 - age * 1.7))
+            p.setPen(QPen(QColor(255, 175, 30, alpha), 2))
+            p.drawEllipse(cx - wr, cy - wr, wr * 2, wr * 2)
+
+        # Núcleo naranja-ámbar
+        g = QRadialGradient(cx - r // 4, cy - r // 4, cr)
+        g.setColorAt(0.0, QColor(255, 220, 100, 240))
+        g.setColorAt(0.4, QColor(255, 155,  30, 220))
+        g.setColorAt(0.8, QColor(210,  95,   0, 195))
+        g.setColorAt(1.0, QColor(120,  50,   0, 160))
+        p.setBrush(QBrush(g)); p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(cx - cr, cy - cr, cr * 2, cr * 2)
+
+        # Ícono de campana (simplificado con arco + línea)
+        p.setPen(QPen(QColor(255, 255, 200, 200), 2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawArc(cx - 9, cy - 12, 18, 16, 0, 180 * 16)
+        p.drawLine(cx - 9, cy + 4, cx + 9, cy + 4)
+        p.drawLine(cx - 3, cy + 7, cx + 3, cy + 7)
+
     # --- drag / click -------------------------------------------------------
     def mousePressEvent(self, ev):
         if ev.button() == Qt.MouseButton.LeftButton:
@@ -275,7 +309,7 @@ class VoiceWorker(QThread):
 
         openwakeword.utils.download_models()
         ww   = WakeModel(inference_framework="onnx")
-        stt  = faster_whisper.WhisperModel("small", device="cpu", compute_type="int8")
+        stt  = faster_whisper.WhisperModel("medium", device="cpu", compute_type="int8")
 
         # TTS local (Windows SAPI — sin red, instantáneo)
         self._tts = pyttsx3.init()
@@ -466,9 +500,15 @@ class VoiceWorker(QThread):
     def _transcribe(self, model, audio) -> str:
         import numpy as np
         f32 = audio.astype(np.float32) / 32768.0
-        segs, _ = model.transcribe(f32, language="es", beam_size=3,
-                                   condition_on_previous_text=False,
-                                   no_speech_threshold=0.6)
+        segs, _ = model.transcribe(
+            f32,
+            language="es",
+            beam_size=5,
+            initial_prompt="Instrucción para MATE, asistente personal en español.",
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
+            temperature=0.0,
+        )
         return " ".join(s.text for s in segs).strip()
 
     def _call_mate(self, text: str) -> str:
@@ -650,6 +690,11 @@ class MateOrbWindow(QMainWindow):
             logger.warning("No se encontró token. Ejecutá mate_login.py primero.")
             self.orb.set_state(ERROR)
 
+        # Timer de notificaciones proactivas (cada 10s)
+        self._notif_timer = QTimer(self)
+        self._notif_timer.timeout.connect(self._check_notifications)
+        self._notif_timer.start(10_000)
+
     # --- token --------------------------------------------------------------
     def _load_token(self) -> str | None:
         if os.path.exists(TOKEN_FILE):
@@ -682,6 +727,50 @@ class MateOrbWindow(QMainWindow):
             lambda r: self.toggle()
             if r == QSystemTrayIcon.ActivationReason.DoubleClick else None
         )
+
+    # --- notificaciones proactivas ------------------------------------------
+    def _check_notifications(self):
+        """
+        Llamado por QTimer cada 10s.
+        Lee .mate_queue.json y anuncia notificaciones cuando el orbe está en IDLE.
+        """
+        if not os.path.exists(NOTIFY_FILE):
+            return
+        if self.orb._state not in (IDLE, ERROR):
+            return   # no interrumpir conversación activa
+        if self.worker and self.worker._speaking_flag.is_set():
+            return   # TTS en curso
+
+        try:
+            with open(NOTIFY_FILE, "r", encoding="utf-8") as f:
+                messages = json.load(f)
+            if not messages:
+                os.remove(NOTIFY_FILE)
+                return
+            os.remove(NOTIFY_FILE)   # borrar antes de hablar (evita repetición)
+            threading.Thread(
+                target=self._announce_notifications,
+                args=(messages,),
+                daemon=True,
+            ).start()
+        except Exception as e:
+            logger.error(f"Error leyendo notificaciones: {e}")
+
+    def _announce_notifications(self, messages: list):
+        """Habla las notificaciones en estado ALERT usando el TTS del worker."""
+        if not self.worker:
+            return
+        self._sig_state.emit(ALERT)
+        try:
+            intro = f"Tenés {len(messages)} notificación{'es' if len(messages) > 1 else ''}."
+            self.worker._speak(intro)
+            for msg in messages:
+                if msg.strip():
+                    self.worker._speak(msg)
+        except Exception as e:
+            logger.error(f"Error anunciando notificaciones: {e}")
+        finally:
+            self._sig_state.emit(IDLE)
 
     # --- handlers -----------------------------------------------------------
     def _on_click(self):
