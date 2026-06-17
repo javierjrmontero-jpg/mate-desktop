@@ -326,6 +326,16 @@ class VoiceWorker(QThread):
         logger.info("MATE Orb listo — decí 'oye MATE' o hacé clic en el orbe para activar")
         self.state_changed.emit(IDLE)
 
+        # Chime de inicio (sonido del sistema de Windows, sin dependencias extra)
+        try:
+            import winsound
+            winsound.PlaySound(
+                r"C:\Windows\Media\chimes.wav",
+                winsound.SND_FILENAME | winsound.SND_ASYNC,
+            )
+        except Exception:
+            pass
+
         SR, CHUNK = 16000, 1280
         import queue as _queue
 
@@ -352,6 +362,13 @@ class VoiceWorker(QThread):
                             logger.debug(f"Wake scores: { {k: f'{v:.3f}' for k,v in pred.items() if v > 0.01} }")
                         if any(v > 0.90 for v in pred.values()):
                             logger.info("Wake word detectado")
+                            # Earcon: doble beep corto al activarse
+                            try:
+                                import winsound
+                                winsound.Beep(880, 80)
+                                winsound.Beep(1100, 80)
+                            except Exception:
+                                pass
                             break
                     if self._manual_trigger.is_set():
                         self._manual_trigger.clear()

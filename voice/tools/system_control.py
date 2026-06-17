@@ -407,6 +407,57 @@ def brightness_down(step: int = 20) -> str:
         return f"No pude bajar el brillo: {e}"
 
 
+# ─── MODO OSCURO / FONDO DE PANTALLA ─────────────────────────────────────────
+
+def _apply_windows_theme(dark: bool) -> None:
+    import winreg, ctypes
+    key = winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        0, winreg.KEY_SET_VALUE,
+    )
+    val = 0 if dark else 1
+    winreg.SetValueEx(key, "AppsUseLightTheme",    0, winreg.REG_DWORD, val)
+    winreg.SetValueEx(key, "SystemUsesLightTheme", 0, winreg.REG_DWORD, val)
+    winreg.CloseKey(key)
+    # Notificar a Windows del cambio sin cerrar sesión
+    ctypes.windll.user32.SendMessageW(0xFFFF, 0x001A, 0, "ImmersiveColorSet")
+
+
+def set_dark_mode() -> str:
+    try:
+        _apply_windows_theme(dark=True)
+        return "Modo oscuro activado."
+    except Exception as e:
+        return f"No pude activar el modo oscuro: {e}"
+
+
+def set_light_mode() -> str:
+    try:
+        _apply_windows_theme(dark=False)
+        return "Modo claro activado."
+    except Exception as e:
+        return f"No pude activar el modo claro: {e}"
+
+
+def set_wallpaper(path: str) -> str:
+    try:
+        import ctypes
+        from pathlib import Path
+        p = Path(path)
+        if not p.exists():
+            return f"No encontré el archivo '{path}'."
+        if p.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp"}:
+            return "El fondo debe ser una imagen JPG, PNG o BMP."
+        SPI_SETDESKWALLPAPER = 20
+        ok = ctypes.windll.user32.SystemParametersInfoW(
+            SPI_SETDESKWALLPAPER, 0, str(p.resolve()), 3
+        )
+        return "Fondo de pantalla actualizado." if ok else "No pude cambiar el fondo de pantalla."
+    except Exception as e:
+        return f"No pude cambiar el fondo de pantalla: {e}"
+
+
 # ─── WINDOWS ─────────────────────────────────────────────────────────────────
 
 def minimize_window() -> str:
@@ -584,6 +635,20 @@ def detect_and_execute(text: str) -> Optional[str]:
     # ── Procesos activos ──────────────────────────────────────────────────────
     if re.search(r'\b(qu[eé] (programas|procesos|apps) (corren|est[áa]n|hay)|lista de procesos)\b', t):
         return list_running_apps()
+
+    # ── Modo oscuro / claro ───────────────────────────────────────────────────
+    if re.search(r'\b(modo oscuro|tema oscuro|pon[eé] oscuro|activ[aá] (el )?modo oscuro|dark mode)\b', t):
+        return set_dark_mode()
+
+    if re.search(r'\b(modo claro|tema claro|pon[eé] claro|activ[aá] (el )?modo claro|light mode)\b', t):
+        return set_light_mode()
+
+    # ── Fondo de pantalla ─────────────────────────────────────────────────────
+    m = re.search(r'\b(?:cambi[aá]|pon[eé]|configur[aá])\s+(?:el\s+)?fondo\s+(?:de\s+pantalla\s+)?(?:a\s+|con\s+)?(.+)', t)
+    if m and re.search(r'\bfondo\b', t):
+        from tools.file_tools import _resolve
+        path = str(_resolve(m.group(1).strip()))
+        return set_wallpaper(path)
 
     # ── Clima ─────────────────────────────────────────────────────────────────
     if re.search(r'\b(clima|tiempo|temperatura|lluv|pronóstico|pron[oó]stico|va a llover|va a nevar|calor|fr[íi]o|nublado|despejado|c[óo]mo est[áa] (el tiempo|el clima))\b', t):
