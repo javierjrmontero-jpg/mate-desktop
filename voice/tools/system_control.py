@@ -585,4 +585,20 @@ def detect_and_execute(text: str) -> Optional[str]:
     if re.search(r'\b(qu[eé] (programas|procesos|apps) (corren|est[áa]n|hay)|lista de procesos)\b', t):
         return list_running_apps()
 
+    # ── Clima ─────────────────────────────────────────────────────────────────
+    if re.search(r'\b(clima|tiempo|temperatura|lluv|pronóstico|pron[oó]stico|va a llover|va a nevar|calor|fr[íi]o|nublado|despejado|c[óo]mo est[áa] (el tiempo|el clima))\b', t):
+        from tools.web_tools import get_weather
+        return get_weather()
+
+    # ── Noticias ──────────────────────────────────────────────────────────────
+    if re.search(r'\b(noticias|titulares|novedades|qu[eé] pas[oó] hoy|actualidad|noticias del d[íi]a)\b', t):
+        from tools.web_tools import get_news
+        return get_news()
+
+    # ── Búsqueda web ──────────────────────────────────────────────────────────
+    m = re.search(r'\b(?:busc[aá](?:me)?|buscar|qu[eé] es|qui[eé]n es|cu[áa]nto cuesta|c[oó]mo se hace|explic[aá]me|contame sobre)\s+(.+)', t)
+    if m:
+        from tools.web_tools import search_web
+        return search_web(m.group(1).strip())
+
     return None  # → delegar al API de MATE
