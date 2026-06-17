@@ -673,4 +673,71 @@ def detect_and_execute(text: str) -> Optional[str]:
         from tools.file_tools import move_file
         return move_file(m.group(1).strip(), m.group(2).strip())
 
+    # ── Recordatorios ─────────────────────────────────────────────────────────
+    # "recordame en X minutos que Y" / "en X minutos recordame Y"
+    m = re.search(r'\brecord[aá]me\b.{0,20}en\s+(\d+)\s+minutos?\s+(?:que\s+)?(.+)', t)
+    if not m:
+        m = re.search(r'\ben\s+(\d+)\s+minutos?\s+record[aá]me\s+(?:que\s+)?(.+)', t)
+    if m:
+        from tools.reminder_tools import set_reminder
+        return set_reminder(m.group(2).strip(), minutes=int(m.group(1)))
+
+    # "recordame en media hora que Y"
+    m = re.search(r'\brecord[aá]me\b.{0,20}en\s+media\s+hora\s+(?:que\s+)?(.+)', t)
+    if m:
+        from tools.reminder_tools import set_reminder
+        return set_reminder(m.group(1).strip(), minutes=30)
+
+    # "recordame en una hora que Y"
+    m = re.search(r'\brecord[aá]me\b.{0,20}en\s+una?\s+hora\s+(?:que\s+)?(.+)', t)
+    if m:
+        from tools.reminder_tools import set_reminder
+        return set_reminder(m.group(1).strip(), minutes=60)
+
+    # "recordame a las HH:MM que Y"
+    m = re.search(r'\brecord[aá]me\b.{0,20}a\s+las?\s+(\d{1,2}[:.]\d{2})\s+(?:que\s+)?(.+)', t)
+    if m:
+        from tools.reminder_tools import set_reminder
+        at = m.group(1).replace(".", ":")
+        return set_reminder(m.group(2).strip(), at_time=at)
+
+    if re.search(r'\b(qu[eé] recordatorios|mis recordatorios|recordatorios pendientes)\b', t):
+        from tools.reminder_tools import list_reminders
+        return list_reminders()
+
+    # ── Notas ─────────────────────────────────────────────────────────────────
+    m = re.search(r'\b(?:anot[aá](?:me)?|guard[aá](?:me)?\s+(?:una?\s+)?nota[:\s])\s*(.+)', t)
+    if m:
+        from tools.notes_tools import save_note
+        return save_note(m.group(1).strip())
+
+    if re.search(r'\b(qu[eé] notas tengo|mis notas|le[eé] mis notas|list[aá] (mis )?notas)\b', t):
+        from tools.notes_tools import list_notes
+        return list_notes()
+
+    m = re.search(r'\b(?:busc[aá](?:me)?\s+(?:una?\s+)?nota|tengo (alguna )?nota)\s+(?:sobre\s+)?(.+)', t)
+    if m:
+        from tools.notes_tools import search_notes
+        return search_notes(m.group(m.lastindex).strip())
+
+    m = re.search(r'\b(?:le[eé]|mostr[aá])\s+(?:la\s+)?nota\s+(?:sobre\s+)?(.+)', t)
+    if m:
+        from tools.notes_tools import read_note
+        return read_note(m.group(1).strip())
+
+    m = re.search(r'\b(?:borr[aá]|elimin[aá])\s+(?:la\s+)?nota\s+(.+)', t)
+    if m:
+        from tools.notes_tools import delete_note
+        return delete_note(m.group(1).strip())
+
+    # ── Metas ─────────────────────────────────────────────────────────────────
+    m = re.search(r'\b(?:cre[aá](?:me)?|guard[aá](?:me)?|agre[gá](?:me)?)\s+(?:una?\s+)?meta\s+(?:para\s+|de\s+)?(.+)', t)
+    if m:
+        from tools.notes_tools import save_goal
+        return save_goal(m.group(1).strip())
+
+    if re.search(r'\b(mis metas|cu[aá]les son mis metas|qu[eé] metas tengo|list[aá] (mis )?metas)\b', t):
+        from tools.notes_tools import list_goals
+        return list_goals()
+
     return None  # → delegar al API de MATE

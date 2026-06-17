@@ -733,29 +733,40 @@ class MateOrbWindow(QMainWindow):
     def _check_notifications(self):
         """
         Llamado por QTimer cada 10s.
-        Lee .mate_queue.json y anuncia notificaciones cuando el orbe está en IDLE.
+        Lee .mate_queue.json y .mate_reminders.json; anuncia cuando el orbe está en IDLE.
         """
-        if not os.path.exists(NOTIFY_FILE):
-            return
         if self.orb._state not in (IDLE, ERROR):
             return   # no interrumpir conversación activa
         if self.worker and self.worker._speaking_flag.is_set():
             return   # TTS en curso
 
+        messages = []
+
+        # ── Cola de notificaciones del monitor (07_monitor.py) ────────────────
+        if os.path.exists(NOTIFY_FILE):
+            try:
+                with open(NOTIFY_FILE, "r", encoding="utf-8") as f:
+                    queued = json.load(f)
+                if queued:
+                    os.remove(NOTIFY_FILE)
+                    messages.extend(queued)
+            except Exception as e:
+                logger.error(f"Error leyendo notificaciones: {e}")
+
+        # ── Recordatorios vencidos (reminder_tools) ───────────────────────────
         try:
-            with open(NOTIFY_FILE, "r", encoding="utf-8") as f:
-                messages = json.load(f)
-            if not messages:
-                os.remove(NOTIFY_FILE)
-                return
-            os.remove(NOTIFY_FILE)   # borrar antes de hablar (evita repetición)
+            from tools.reminder_tools import check_and_fire
+            due = check_and_fire()
+            messages.extend(due)
+        except Exception as e:
+            logger.debug(f"Error chequeando recordatorios: {e}")
+
+        if messages:
             threading.Thread(
                 target=self._announce_notifications,
                 args=(messages,),
                 daemon=True,
             ).start()
-        except Exception as e:
-            logger.error(f"Error leyendo notificaciones: {e}")
 
     def _announce_notifications(self, messages: list):
         """Habla las notificaciones en estado ALERT usando el TTS del worker."""
