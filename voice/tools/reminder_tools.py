@@ -5,6 +5,7 @@ Recordatorios con hora. Guardados en JSON; el orbe los anuncia por TTS cuando ll
 Sin dependencias externas.
 """
 
+import sys
 import json
 import logging
 from datetime import datetime, timedelta
@@ -12,7 +13,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_REMINDERS_FILE = Path(__file__).parent.parent / ".mate_reminders.json"
+_DATA_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
+_REMINDERS_FILE = _DATA_DIR / ".mate_reminders.json"
 
 
 def _load() -> list[dict]:

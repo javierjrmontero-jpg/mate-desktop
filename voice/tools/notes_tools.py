@@ -5,6 +5,7 @@ Base de conocimiento personal: notas y metas locales en JSON.
 Sin dependencias externas.
 """
 
+import sys
 import json
 import logging
 from datetime import datetime
@@ -12,7 +13,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_NOTES_FILE = Path(__file__).parent.parent / ".mate_notes.json"
+_DATA_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
+_NOTES_FILE = _DATA_DIR / ".mate_notes.json"
 
 
 def _load() -> list[dict]:
