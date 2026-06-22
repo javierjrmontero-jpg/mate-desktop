@@ -458,6 +458,10 @@ class VoiceWorker(QThread):
                         _sys.path.insert(0, _os.path.dirname(__file__))
                     from tools.system_control import detect_and_execute
                     local_resp = detect_and_execute(text)
+                    if local_resp == "[DICTATION_MODE]":
+                        self._run_dictation_mode(stt, SR, NATIVE_SR)
+                        self.state_changed.emit(LISTENING)
+                        continue
                     if local_resp:
                         logger.info(f"[LOCAL] {local_resp}")
                         self.response_ready.emit(local_resp)
@@ -716,6 +720,51 @@ class VoiceWorker(QThread):
         finally:
             time.sleep(0.2)
             self._speaking_flag.clear()
+
+    def _run_dictation_mode(self, stt, sr: int, native_sr: int):
+        """
+        Modo dictado: acumula transcripciones hasta que el usuario diga 'listo',
+        luego escribe todo el texto acumulado en la ventana activa.
+        """
+        self.state_changed.emit(SPEAKING)
+        self._speak("Modo dictado activado. Hablá cuando quieras. Decí 'listo' para escribir, o 'cancelar' para salir.")
+        accumulated = []
+        while self._running:
+            self.state_changed.emit(LISTENING)
+            audio = self._capture(sr, silence_sec=1.2, max_sec=30.0, native_sr=native_sr)
+            if audio is None:
+                break
+            self.state_changed.emit(PROCESSING)
+            text = self._transcribe(stt, audio)
+            if not text.strip():
+                continue
+            t_lower = text.lower().strip()
+            if re.search(r'\b(cancelar|cancel[aá]|abort[aá]|sal[ií]r)\b', t_lower):
+                self.state_changed.emit(SPEAKING)
+                self._speak("Dictado cancelado.")
+                return
+            if re.search(r'\b(listo|terminar|termin[eé]|fin|fin\s+del\s+dictado)\b', t_lower):
+                break
+            accumulated.append(text.strip())
+            logger.info(f"[DICTATION] +'{text.strip()}'")
+
+        if not accumulated:
+            self.state_changed.emit(SPEAKING)
+            self._speak("Sin texto dictado.")
+            return
+
+        full_text = " ".join(accumulated)
+        self.state_changed.emit(SPEAKING)
+        try:
+            import sys as _sys, os as _os
+            if _os.path.dirname(__file__) not in _sys.path:
+                _sys.path.insert(0, _os.path.dirname(__file__))
+            from tools.ghost_operator import type_text
+            type_text(full_text)
+            self._speak(f"Texto escrito. {len(full_text)} caracteres.")
+        except Exception as e:
+            logger.error(f"Dictation type_text error: {e}")
+            self._speak("Error escribiendo el texto.")
 
     def _barge_in_monitor(self, native_sr: int = 16000):
         """

@@ -5,6 +5,7 @@ Control de mouse, teclado y pantalla por voz.
 Requiere: pyautogui (ya incluido en el proyecto).
 """
 
+import re
 import time
 import logging
 
@@ -284,6 +285,56 @@ def get_cursor_position() -> str:
         return f"El cursor está en {x}, {y}."
     except Exception as e:
         return f"Error: {e}"
+
+
+# ─── Vision Click ────────────────────────────────────────────────────────────
+
+def click_element(element_name: str) -> str:
+    """Captura la pantalla, usa Claude Vision para encontrar el elemento y hace click."""
+    try:
+        import os, json, base64, anthropic, pyautogui
+        from io import BytesIO
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return "ANTHROPIC_API_KEY no configurado en .env."
+
+        img = pyautogui.screenshot()
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        img_b64 = base64.standard_b64encode(buf.getvalue()).decode()
+
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=64,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_b64}},
+                    {"type": "text", "text": (
+                        f"Find the UI element described as '{element_name}'. "
+                        "Reply ONLY with JSON: {\"x\": int, \"y\": int} using screen pixel coordinates. "
+                        "If not found, reply {\"x\": -1, \"y\": -1}."
+                    )},
+                ],
+            }],
+        )
+
+        raw = resp.content[0].text.strip()
+        m = re.search(r'\{[^}]+\}', raw)
+        if not m:
+            return f"No pude localizar '{element_name}' en pantalla."
+        coords = json.loads(m.group())
+        x, y = int(coords.get("x", -1)), int(coords.get("y", -1))
+        if x < 0 or y < 0:
+            return f"No encontré '{element_name}' en la pantalla."
+
+        pyautogui.click(x, y)
+        return f"Click en '{element_name}'."
+    except Exception as e:
+        logger.error(f"click_element error: {e}")
+        return f"Error haciendo click en '{element_name}': {e}"
 
 
 # ─── Escritorios Virtuales ────────────────────────────────────────────────────

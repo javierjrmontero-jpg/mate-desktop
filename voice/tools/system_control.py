@@ -1199,4 +1199,18 @@ def detect_and_execute(text: str) -> Optional[str]:
         from tools.calendar_tools import delete_event
         return delete_event(m.group(1).strip())
 
+    # ── Modo dictado ──────────────────────────────────────────────────────────
+    if re.search(r'\b(dict[aá](me|nos)?|modo\s+dictado|empez[aá]\s+a\s+dictar|quiero\s+dictar)\b', t):
+        return "[DICTATION_MODE]"
+
+    # ── Vision Click ──────────────────────────────────────────────────────────
+    m = re.search(r'\b(?:hac[eé]|hace|clic[ck])\s+(?:en\s+(?:el\s+|la\s+|los\s+|las\s+)?)?clic[ck]\s+en\s+(?:el\s+|la\s+|los\s+|las\s+)?(.+?)(?:\s+por\s+favor|$)', t)
+    if not m:
+        m = re.search(r'\bclic[ck]\s+en\s+(?:el\s+|la\s+|los\s+|las\s+)?(.+?)(?:\s+por\s+favor|$)', t)
+    if not m:
+        m = re.search(r'\b(?:apret[aá]|presion[aá]|toc[aá])\s+(?:el\s+|la\s+)?bot[oó]n\s+(?:de\s+)?(.+?)(?:\s+por\s+favor|$)', t)
+    if m:
+        from tools.ghost_operator import click_element
+        return click_element(m.group(1).strip())
+
     return None  # → delegar al API de MATE
