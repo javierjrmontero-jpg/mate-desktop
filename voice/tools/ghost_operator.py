@@ -63,12 +63,27 @@ def scroll_up(amount: int = 5) -> str:
 # ─── Teclado ─────────────────────────────────────────────────────────────────
 
 def type_text(text: str) -> str:
-    """Escribe texto como si fuera del teclado físico."""
+    """Escribe texto en la ventana activa. Rechaza terminales y caracteres de control."""
+    # CRIT-3: bloquear si la ventana activa es una terminal
+    try:
+        import pygetwindow as gw
+        active = gw.getActiveWindow()
+        if active:
+            danger = ("powershell", "cmd", "terminal", "bash", "wsl", "command prompt",
+                      "windows terminal", "pwsh", "conhost")
+            if any(d in active.title.lower() for d in danger):
+                return "No escribo texto en terminales por seguridad. Cambiá el foco a otra ventana primero."
+    except Exception:
+        pass
+    # CRIT-3: eliminar caracteres de control (newline, CR, etc.) que actúan como Enter
+    text = re.sub(r'[\x00-\x08\x0a-\x1f\x7f]', '', text)
+    if not text.strip():
+        return "Texto vacío después de sanitización."
     try:
         import pyautogui
         time.sleep(0.15)
         pyautogui.write(text, interval=0.03)
-        return f"Texto escrito."
+        return "Texto escrito."
     except Exception as e:
         return f"No pude escribir: {e}"
 
@@ -196,7 +211,11 @@ def reopen_tab() -> str:
 
 
 def navigate_to(url: str) -> str:
-    """Abre una URL en el navegador activo (foco en barra de dirección)."""
+    """Abre una URL en el navegador activo. Solo acepta http y https."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return f"Solo navego a URLs HTTP/HTTPS. Esquema '{parsed.scheme}' no permitido."
     try:
         import pyautogui
         pyautogui.hotkey("ctrl", "l")
@@ -330,6 +349,10 @@ def click_element(element_name: str) -> str:
         if x < 0 or y < 0:
             return f"No encontré '{element_name}' en la pantalla."
 
+        # HIGH-5: validar coordenadas dentro de los límites de pantalla
+        screen_w, screen_h = pyautogui.size()
+        if not (0 <= x < screen_w and 0 <= y < screen_h):
+            return f"Coordenadas fuera de pantalla ({x}, {y}). Abortado."
         pyautogui.click(x, y)
         return f"Click en '{element_name}'."
     except Exception as e:

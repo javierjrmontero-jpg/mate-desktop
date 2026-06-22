@@ -43,11 +43,14 @@ def send_telegram(message: str, chat_id: str = "") -> str:
         if r.status_code == 200:
             logger.info(f"Telegram enviado: {message[:40]}")
             return f"Mensaje enviado por Telegram."
-        logger.error(f"Telegram error {r.status_code}: {r.text}")
+        # HIGH-6: no loguear r.text — puede contener el token en la URL de error
+        logger.error(f"Telegram error {r.status_code}")
         return f"Error enviando Telegram: código {r.status_code}."
     except Exception as e:
-        logger.error(f"Telegram exception: {e}")
-        return f"No pude enviar el mensaje: {e}"
+        # Enmascarar token si aparece en el mensaje de excepción
+        err = str(e).replace(token, "***") if token else str(e)
+        logger.error(f"Telegram exception: {err}")
+        return f"No pude enviar el mensaje."
 
 
 def get_telegram_messages() -> str:
@@ -68,8 +71,12 @@ def get_telegram_messages() -> str:
             msg  = u.get("message", {})
             text = msg.get("text", "")
             fr   = msg.get("from", {}).get("first_name", "?")
-            if text:
-                msgs.append(f"{fr}: {text[:50]}")
+            if text and isinstance(text, str):
+                import html, re as _re
+                # LOW-2: sanitizar para TTS — strip SAPI XML y [RUN_PY:]
+                safe = html.escape(text[:50])
+                safe = _re.sub(r'\[RUN_PY:.+?\]', '[bloqueado]', safe, flags=_re.DOTALL)
+                msgs.append(f"{fr}: {safe}")
         return " | ".join(msgs) if msgs else "Sin mensajes de texto recientes."
     except Exception as e:
         return f"Error leyendo Telegram: {e}"

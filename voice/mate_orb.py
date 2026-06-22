@@ -43,6 +43,16 @@ if os.path.exists(_env_file):
                 os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
 
 MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
+# CRIT-2: TLS verification. Por defecto True (CAs del sistema).
+# Setear MATE_TLS_VERIFY a la ruta de un .crt para cert pinning,
+# o a "false" solo en entornos de desarrollo local con cert autofirmado.
+_tls_env = os.getenv("MATE_TLS_VERIFY", "true").strip().lower()
+if _tls_env == "false":
+    MATE_TLS_VERIFY: bool | str = False
+elif _tls_env == "true" or _tls_env == "":
+    MATE_TLS_VERIFY = True
+else:
+    MATE_TLS_VERIFY = _tls_env  # ruta a CA bundle
 ORB_SIZE   = 180
 TOKEN_FILE   = os.path.join(_exe_dir, ".mate_token")
 NOTIFY_FILE  = os.path.join(_exe_dir, ".mate_queue.json")
@@ -483,18 +493,34 @@ class VoiceWorker(QThread):
                     break
 
                 # ── 5b. Dev Agent: ejecutar código si el API lo indica ────
-                # El API puede incluir [RUN_PY:código] para ejecución automática.
+                # CRIT-1: requiere confirmación explícita del usuario antes de ejecutar.
                 import re as _re
                 _run_match = _re.search(r'\[RUN_PY:(.+?)\]', reply, _re.DOTALL)
                 if _run_match:
                     try:
                         from tools.dev_agent_tools import run_python
-                        _code   = _run_match.group(1).strip()
-                        _result = run_python(_code)
-                        # Reemplazar el marcador por el resultado en la respuesta
-                        reply   = _re.sub(r'\[RUN_PY:.+?\]', _result, reply, flags=_re.DOTALL).strip()
-                        if not reply:
-                            reply = _result
+                        _code = _run_match.group(1).strip()
+                        _confirmed = False
+                        try:
+                            import tkinter as _tk
+                            import tkinter.messagebox as _mb
+                            _root = _tk.Tk(); _root.withdraw()
+                            _confirmed = _mb.askyesno(
+                                "MATE — Ejecutar código",
+                                f"El servidor solicita ejecutar código Python:\n\n{_code[:300]}\n\n¿Permitir?",
+                                icon="warning",
+                            )
+                            _root.destroy()
+                        except Exception:
+                            pass
+                        if _confirmed:
+                            _result = run_python(_code)
+                            reply = _re.sub(r'\[RUN_PY:.+?\]', _result, reply, flags=_re.DOTALL).strip()
+                            if not reply:
+                                reply = _result
+                        else:
+                            reply = _re.sub(r'\[RUN_PY:.+?\]', '[ejecución cancelada]', reply, flags=_re.DOTALL).strip()
+                            logger.info("Dev Agent: ejecución rechazada por el usuario")
                     except Exception as _de:
                         logger.warning(f"Dev Agent exec error: {_de}")
 
@@ -631,7 +657,7 @@ class VoiceWorker(QThread):
             with requests.post(
                 f"{self.mate_url}/api/v1/chat",
                 json=payload, headers=headers,
-                stream=True, timeout=60, verify=False,
+                stream=True, timeout=60, verify=MATE_TLS_VERIFY,
             ) as r:
                 for raw in r.iter_lines():
                     if not self._running: break
@@ -904,9 +930,19 @@ class MateOrbWindow(QMainWindow):
             try:
                 with open(NOTIFY_FILE, "r", encoding="utf-8") as f:
                     queued = json.load(f)
-                if queued:
+                if queued and isinstance(queued, list):
                     os.remove(NOTIFY_FILE)
-                    messages.extend(queued)
+                    # HIGH-4: validar contenido — solo strings, sin marcadores MATE, longitud acotada
+                    import re as _re
+                    safe = []
+                    for m in queued:
+                        if not isinstance(m, str):
+                            continue
+                        m = _re.sub(r'\[RUN_PY:.+?\]', '', m, flags=_re.DOTALL)
+                        m = m[:500].strip()
+                        if m:
+                            safe.append(m)
+                    messages.extend(safe)
             except Exception as e:
                 logger.error(f"Error leyendo notificaciones: {e}")
 

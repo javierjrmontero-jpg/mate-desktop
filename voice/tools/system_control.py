@@ -122,7 +122,11 @@ def open_app(name: str) -> str:
                 subprocess.Popen(exe, shell=True)
             return f"Abriendo {name}."
         else:
-            subprocess.Popen(f'start "" "{name}"', shell=True)
+            # MED-1: validar nombre antes de pasarlo a shell
+            import re as _re
+            if not _re.match(r'^[\w\s.\-]{1,60}$', name):
+                return f"Nombre de aplicación no válido: '{name}'."
+            subprocess.Popen(["cmd", "/c", "start", "", name])
             return f"Intentando abrir {name}."
     except Exception as e:
         logger.error(f"open_app error: {e}")
@@ -131,7 +135,12 @@ def open_app(name: str) -> str:
 
 def close_app(name: str) -> str:
     n = name.lower().strip()
-    exe = APP_ALIASES.get(n, name)
+    # MED-4: solo cerrar apps del alias list — no aceptar nombres arbitrarios
+    exe = APP_ALIASES.get(n)
+    if not exe:
+        return f"No tengo autorización para cerrar '{name}'. Usá el nombre correcto de la app."
+    if exe.startswith("browser:") or exe.endswith(":"):
+        return f"No puedo cerrar '{name}' con ese método."
     if not exe.endswith(".exe"):
         exe = exe + ".exe"
     try:

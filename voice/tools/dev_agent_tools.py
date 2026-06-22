@@ -57,7 +57,11 @@ def run_last_script() -> str:
     if not _LAST_SCRIPT.exists():
         return "No hay ningún script anterior guardado."
     path_str = _LAST_SCRIPT.read_text(encoding="utf-8").strip()
-    path = Path(path_str)
+    path = Path(path_str).resolve()
+    # MED-6: validar que el path esté dentro de _SCRIPTS_DIR
+    if not str(path).startswith(str(_SCRIPTS_DIR.resolve())):
+        logger.error(f"run_last_script: path fuera de scripts dir: {path}")
+        return "Error: el script apunta a una ubicación no permitida."
     if not path.exists():
         return f"El script '{path.name}' ya no existe."
     try:
@@ -73,18 +77,33 @@ def run_last_script() -> str:
         return f"Error: {e}"
 
 
+import re as _re
+
+# CRIT-4: Solo verbos de lectura permitidos por política de seguridad
+_PS_ALLOWLIST = _re.compile(
+    r'^(Get-Process|Get-Date|Get-ChildItem|Get-Item|Get-Content|'
+    r'Get-Service|Get-ComputerInfo|Get-Disk|Get-Volume|'
+    r'Write-Output|Measure-Object|Select-Object|Where-Object|'
+    r'Format-List|Format-Table)\b',
+    _re.IGNORECASE,
+)
+
+
 def run_powershell(command: str) -> str:
-    """Ejecuta un comando PowerShell y retorna la salida (máx 3 líneas)."""
+    """Ejecuta un comando PowerShell de solo lectura (allowlist de verbos)."""
+    if not _PS_ALLOWLIST.match(command.strip()):
+        return ("Ese comando PowerShell no está permitido. "
+                "Solo se permiten comandos Get- y de formato para proteger el sistema.")
     try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=15,
         )
         out = (result.stdout or result.stderr or "").strip()
         lines = out.splitlines()[:3]
         return " | ".join(lines) if lines else "Comando ejecutado sin salida."
     except subprocess.TimeoutExpired:
-        return "Comando excedió 30 segundos."
+        return "Comando excedió el tiempo límite."
     except Exception as e:
         return f"Error PowerShell: {e}"
 
