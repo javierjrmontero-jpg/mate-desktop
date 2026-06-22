@@ -887,13 +887,28 @@ class MateOrbWindow(QMainWindow):
         if token:
             self._start_worker(token)
         else:
-            logger.warning("No se encontró token. Ejecutá mate_login.py primero.")
+            logger.warning("No se encontró token. Abriendo setup para hacer login…")
             self.orb.set_state(ERROR)
+            QTimer.singleShot(500, self._prompt_login)
 
         # Timer de notificaciones proactivas (cada 10s)
         self._notif_timer = QTimer(self)
         self._notif_timer.timeout.connect(self._check_notifications)
         self._notif_timer.start(10_000)
+
+    # --- login prompt -------------------------------------------------------
+    def _prompt_login(self):
+        try:
+            from mate_setup import run_setup
+            run_setup(force=True)
+            token = self._load_token()
+            if token:
+                self._start_worker(token)
+                self.orb.set_state(IDLE)
+            else:
+                logger.warning("Setup cerrado sin token. MATE inactivo.")
+        except Exception as e:
+            logger.error(f"Setup wizard error: {e}")
 
     # --- token --------------------------------------------------------------
     def _load_token(self) -> str | None:

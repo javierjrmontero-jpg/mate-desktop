@@ -218,6 +218,36 @@ class _SetupDialog:
         f3.addRow("Zona horaria", self._tz)
         tabs.addTab(t3, "Spotify / Calendar")
 
+        # ── Tab 4: Login MATE ───────────────────────────────────────────────
+        t4 = QWidget()
+        f4 = QFormLayout(t4)
+        f4.setSpacing(10)
+
+        login_note = QLabel("Ingresá tus credenciales de MATE para obtener el token de acceso.")
+        login_note.setStyleSheet("color: #888; font-size: 11px;")
+        login_note.setWordWrap(True)
+        f4.addRow(login_note)
+
+        self._email = QLineEdit()
+        self._email.setPlaceholderText("tu@email.com")
+
+        self._password = QLineEdit()
+        self._password.setPlaceholderText("contraseña")
+        self._password.setEchoMode(QLineEdit.EchoMode.Password)
+
+        self._login_status = QLabel("")
+        self._login_status.setStyleSheet("font-size: 11px;")
+        self._login_status.setWordWrap(True)
+
+        login_btn = QPushButton("Iniciar sesión y guardar token")
+        login_btn.clicked.connect(self._do_login)
+
+        f4.addRow("Email *", self._email)
+        f4.addRow("Contraseña *", self._password)
+        f4.addRow("", login_btn)
+        f4.addRow(self._login_status)
+        tabs.addTab(t4, "Login MATE")
+
         # ── Botones ─────────────────────────────────────────────────────────
         self._status = QLabel("")
         self._status.setStyleSheet("color: #ff6666; font-size: 11px;")
@@ -238,6 +268,40 @@ class _SetupDialog:
 
         self._dlg = dlg
         return dlg.exec()
+
+    def _do_login(self):
+        url      = self._url.text().strip() or os.environ.get("MATE_URL", "https://mate.local")
+        email    = self._email.text().strip()
+        password = self._password.text()
+        if not email or not password:
+            self._login_status.setStyleSheet("color: #ff6666; font-size: 11px;")
+            self._login_status.setText("Email y contraseña son obligatorios.")
+            return
+        self._login_status.setStyleSheet("color: #aaa; font-size: 11px;")
+        self._login_status.setText("Conectando…")
+        try:
+            import json, urllib.request, ssl
+            payload = json.dumps({"email": email, "password": password}).encode()
+            tls_val = "false" if self._tls.currentIndex() == 1 else "true"
+            ctx = ssl._create_unverified_context() if tls_val == "false" else ssl.create_default_context()
+            req = urllib.request.Request(
+                f"{url}/api/v1/auth/login",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, context=ctx, timeout=15) as r:
+                data = json.loads(r.read())
+            token = data.get("token") or data.get("access_token", "")
+            if not token:
+                raise ValueError(f"Respuesta inesperada: {list(data.keys())}")
+            from secure_config import save_token
+            save_token(token)
+            self._login_status.setStyleSheet("color: #44ff88; font-size: 11px;")
+            self._login_status.setText(f"✓ Token guardado cifrado. ({token[:20]}…)")
+        except Exception as e:
+            self._login_status.setStyleSheet("color: #ff6666; font-size: 11px;")
+            self._login_status.setText(f"✗ Error: {e}")
 
     def _browse_gcal(self):
         from PyQt6.QtWidgets import QFileDialog
