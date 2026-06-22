@@ -19,28 +19,10 @@ logger = logging.getLogger(__name__)
 
 _DATA_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
 
-
-def _resolve_storage_dir() -> Path:
-    """Usa OneDrive/MATE-Sync si está disponible, si no el directorio local."""
-    od_env = os.environ.get("ONEDRIVE_PATH", "")
-    candidates = [Path(od_env)] if od_env else []
-    candidates += [
-        Path.home() / "OneDrive",
-        Path.home() / "OneDrive - Personal",
-        Path(os.environ.get("USERPROFILE", "")) / "OneDrive",
-    ]
-    for p in candidates:
-        if p.exists():
-            sync = p / "MATE-Sync"
-            sync.mkdir(exist_ok=True)
-            return sync
-    return _DATA_DIR
-
-
-_STORAGE_DIR = _resolve_storage_dir()
-_LOCAL_CAL  = _STORAGE_DIR / ".mate_calendar.json"
+# MED-2/MED-3: calendario y token OAuth guardados solo en local (no OneDrive)
+_LOCAL_CAL  = _DATA_DIR / ".mate_calendar.json"
 _GCAL_CREDS = os.environ.get("GOOGLE_CREDENTIALS_PATH", "")
-_TOKEN_PATH = str(_STORAGE_DIR / ".gcal_token.json")
+_TOKEN_PATH = str(_DATA_DIR / ".gcal_token.json")
 _TZ         = os.environ.get("MATE_TIMEZONE", "America/Argentina/Buenos_Aires")
 
 _DIAS  = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]

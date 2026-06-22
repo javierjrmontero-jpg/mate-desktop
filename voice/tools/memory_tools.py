@@ -16,26 +16,8 @@ logger = logging.getLogger(__name__)
 
 _DATA_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
 
-
-def _resolve_storage_dir() -> Path:
-    """Usa OneDrive/MATE-Sync si está disponible, si no el directorio local."""
-    od_env = os.environ.get("ONEDRIVE_PATH", "")
-    candidates = [Path(od_env)] if od_env else []
-    candidates += [
-        Path.home() / "OneDrive",
-        Path.home() / "OneDrive - Personal",
-        Path(os.environ.get("USERPROFILE", "")) / "OneDrive",
-    ]
-    for p in candidates:
-        if p.exists():
-            sync = p / "MATE-Sync"
-            sync.mkdir(exist_ok=True)
-            return sync
-    return _DATA_DIR
-
-
-_STORAGE_DIR = _resolve_storage_dir()
-_MEM_FILE = _STORAGE_DIR / ".mate_memory.json"
+# MED-3: datos de memoria guardados solo en local (no OneDrive) para evitar sync en texto plano
+_MEM_FILE = _DATA_DIR / ".mate_memory.json"
 
 
 def _load() -> dict:

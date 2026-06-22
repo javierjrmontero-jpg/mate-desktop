@@ -30,9 +30,18 @@ except ImportError:
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
-# Config — carga .env local si existe (portabilidad entre PCs)
+# Config — carga credenciales cifradas (DPAPI) o fallback a .env (dev/legacy)
 # ---------------------------------------------------------------------------
 _exe_dir  = str(Path(sys.executable).parent) if getattr(sys, "frozen", False) else os.path.dirname(__file__)
+
+# 1. Intentar config cifrada (HIGH-1 + Setup Wizard)
+try:
+    from secure_config import inject_config_into_env
+    inject_config_into_env()
+except Exception:
+    pass
+
+# 2. Fallback: .env en texto plano (desarrollo / instalaciones previas)
 _env_file = os.path.join(_exe_dir, ".env")
 if os.path.exists(_env_file):
     with open(_env_file, encoding="utf-8") as _ef:
@@ -41,6 +50,14 @@ if os.path.exists(_env_file):
             if _line and not _line.startswith("#") and "=" in _line:
                 _k, _v = _line.split("=", 1)
                 os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+
+# 3. Si falta MATE_URL lanzar wizard de primer arranque
+if not os.environ.get("MATE_URL", "").strip():
+    try:
+        from mate_setup import run_setup
+        run_setup()
+    except Exception as _e:
+        print(f"[MATE] Setup wizard falló: {_e}")
 
 MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
 # CRIT-2: TLS verification. Por defecto True (CAs del sistema).
@@ -54,7 +71,6 @@ elif _tls_env == "true" or _tls_env == "":
 else:
     MATE_TLS_VERIFY = _tls_env  # ruta a CA bundle
 ORB_SIZE   = 180
-TOKEN_FILE   = os.path.join(_exe_dir, ".mate_token")
 NOTIFY_FILE  = os.path.join(_exe_dir, ".mate_queue.json")
 CONV_TIMEOUT = 10.0   # segundos sin habla antes de cerrar la conversación automáticamente
 
@@ -881,9 +897,14 @@ class MateOrbWindow(QMainWindow):
 
     # --- token --------------------------------------------------------------
     def _load_token(self) -> str | None:
-        if os.path.exists(TOKEN_FILE):
-            t = open(TOKEN_FILE).read().strip()
-            return t if t else None
+        # HIGH-1: intentar token cifrado con DPAPI primero
+        try:
+            from secure_config import load_token
+            t = load_token()
+            if t:
+                return t
+        except Exception:
+            pass
         return None
 
     # --- worker -------------------------------------------------------------
