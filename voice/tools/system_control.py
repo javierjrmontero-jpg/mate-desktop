@@ -540,6 +540,126 @@ def close_window() -> str:
         return f"No pude cerrar la ventana: {e}"
 
 
+def close_window_by_name(name: str) -> str:
+    """Cierra una ventana específica por título."""
+    try:
+        import pygetwindow as gw
+        matches = [w for w in gw.getAllWindows()
+                   if name.lower() in w.title.lower() and w.title.strip()]
+        if not matches:
+            return f"No encontré ventana con '{name}'."
+        title = matches[0].title
+        matches[0].close()
+        return f"Cerré '{title}'."
+    except Exception as e:
+        return f"No pude cerrar la ventana: {e}"
+
+
+def restore_window() -> str:
+    """Restaura la ventana activa a su tamaño normal."""
+    try:
+        import pygetwindow as gw
+        win = gw.getActiveWindow()
+        if win:
+            win.restore()
+            return f"Restauré '{win.title}'."
+        return "No hay ventana activa."
+    except Exception as e:
+        return f"No pude restaurar la ventana: {e}"
+
+
+def snap_window(direction: str) -> str:
+    """Ajusta la ventana activa a un lado de la pantalla (Win + flecha)."""
+    _dir_map = {
+        "izquierda": "left", "left": "left",
+        "derecha": "right", "right": "right",
+        "arriba": "up", "up": "up",
+        "abajo": "down", "down": "down",
+    }
+    key = _dir_map.get(direction.lower())
+    if not key:
+        return f"Dirección '{direction}' no reconocida. Usá: izquierda, derecha, arriba, abajo."
+    try:
+        import pyautogui
+        pyautogui.hotkey("win", key)
+        return f"Ventana ajustada a la {direction}."
+    except Exception as e:
+        return f"No pude ajustar la ventana: {e}"
+
+
+def _get_monitors() -> list:
+    """Retorna lista de (left, top, right, bottom) por monitor."""
+    import ctypes
+    from ctypes import wintypes
+    monitors = []
+
+    MonitorEnumProc = ctypes.WINFUNCTYPE(
+        ctypes.c_bool, ctypes.c_ulong, ctypes.c_ulong,
+        ctypes.POINTER(wintypes.RECT), ctypes.c_double,
+    )
+
+    def _cb(hm, hdc, rect, data):
+        r = rect.contents
+        monitors.append((r.left, r.top, r.right, r.bottom))
+        return True
+
+    ctypes.windll.user32.EnumDisplayMonitors(None, None, MonitorEnumProc(_cb), 0)
+    return monitors
+
+
+def list_monitors() -> str:
+    """Lista los monitores conectados con su resolución y posición."""
+    try:
+        mons = _get_monitors()
+        if not mons:
+            return "No se detectaron monitores."
+        parts = []
+        for i, (l, t, r, b) in enumerate(mons, 1):
+            parts.append(f"Monitor {i}: {r-l}x{b-t}, posición ({l},{t})")
+        return ". ".join(parts) + f". Total: {len(mons)} monitor(es)."
+    except Exception as e:
+        return f"No pude listar monitores: {e}"
+
+
+def move_window_to_monitor(name: str, monitor_num: int) -> str:
+    """Mueve una ventana al monitor indicado (1-based)."""
+    try:
+        import pygetwindow as gw
+        mons = _get_monitors()
+        idx = monitor_num - 1
+        if not (0 <= idx < len(mons)):
+            return f"No existe el monitor {monitor_num}. Hay {len(mons)} monitor(es) conectado(s)."
+        matches = [w for w in gw.getAllWindows()
+                   if name.lower() in w.title.lower() and w.title.strip()]
+        if not matches:
+            return f"No encontré ventana con '{name}'."
+        win = matches[0]
+        ml, mt, mr, mb = mons[idx]
+        # Mover al cuarto superior-izquierdo del monitor destino
+        win.moveTo(ml + 50, mt + 50)
+        return f"Moví '{win.title}' al monitor {monitor_num}."
+    except Exception as e:
+        return f"No pude mover la ventana: {e}"
+
+
+def change_resolution(width: int, height: int) -> str:
+    """Cambia la resolución de la pantalla principal."""
+    try:
+        import win32api, win32con
+        dm = win32api.EnumDisplaySettings(None, win32con.ENUM_CURRENT_SETTINGS)
+        dm.PelsWidth  = width
+        dm.PelsHeight = height
+        dm.Fields = win32con.DM_PELSWIDTH | win32con.DM_PELSHEIGHT
+        result = win32api.ChangeDisplaySettings(dm, 0)
+        if result == 0:
+            return f"Resolución cambiada a {width}x{height}."
+        return f"No pude cambiar la resolución a {width}x{height} (código {result})."
+    except ImportError:
+        return "win32api no disponible. Instalá pywin32."
+    except Exception as e:
+        return f"Error cambiando resolución: {e}"
+
+
 # ─── INTENT ROUTER ───────────────────────────────────────────────────────────
 
 def detect_and_execute(text: str) -> Optional[str]:
@@ -632,11 +752,53 @@ def detect_and_execute(text: str) -> Optional[str]:
     if re.search(r'\b(cerr[áa]? la ventana|cierra (la ventana )?actual|alt f4)\b', t):
         return close_window()
 
+    # Cerrar ventana por nombre: "cerrá la ventana de Chrome"
+    m = re.search(r'\bcierra\s+la\s+ventana\s+de\s+(.+?)(?:\s+por favor|$)', t)
+    if m:
+        return close_window_by_name(m.group(1).strip())
+
+    # Restaurar ventana
+    if re.search(r'\b(restaur[aá]|restaura|volvé\s+a\s+normal|tama[ñn]o\s+normal)\s*(la\s+ventana)?\b', t):
+        return restore_window()
+
+    # Snap de ventana: "poné la ventana a la izquierda / derecha / arriba / abajo"
+    m = re.search(r'\b(?:pon[eé]|ajust[aá]|mand[aá]|snap)\s+(?:la\s+ventana\s+)?(?:a\s+la\s+|al\s+)?(izquierda|derecha|arriba|abajo|left|right|up|down)\b', t)
+    if m:
+        return snap_window(m.group(1))
+
+    # Monitores
+    if re.search(r'\b(cu[aá]ntos\s+monitores|monitores\s+(conectados|tengo|disponibles)|list[aá]\s+monitores|qu[eé]\s+monitores)\b', t):
+        return list_monitors()
+
+    # Mover ventana a monitor: "pasá Chrome al monitor 2"
+    m = re.search(r'\b(?:pas[aá]|mov[eé]|mand[aá])\s+(.+?)\s+al\s+monitor\s+(\d+)\b', t)
+    if m:
+        return move_window_to_monitor(m.group(1).strip(), int(m.group(2)))
+
+    # Cambiar resolución: "cambiá la resolución a 1920x1080"
+    m = re.search(r'\b(?:cambi[aá]|pon[eé]|ajust[aá])\s+(?:la\s+)?resoluci[oó]n\s+(?:a\s+)?(\d{3,4})\s*[xX]\s*(\d{3,4})\b', t)
+    if m:
+        return change_resolution(int(m.group(1)), int(m.group(2)))
+
+    # Escritorios virtuales
+    if re.search(r'\b(nuevo\s+escritorio\s+virtual|cre[aá]\s+(?:un\s+)?escritorio\s+virtual)\b', t):
+        from tools.ghost_operator import new_virtual_desktop
+        return new_virtual_desktop()
+
+    if re.search(r'\b(cerr[aá]\s+(?:el\s+)?escritorio\s+virtual|elimin[aá]\s+(?:el\s+)?escritorio\s+virtual)\b', t):
+        from tools.ghost_operator import close_virtual_desktop
+        return close_virtual_desktop()
+
+    m = re.search(r'\b(?:cambi[aá]|pas[aá])\s+al\s+(?:escritorio\s+virtual|desktop)\s+(siguiente|anterior|derecha|izquierda)\b', t)
+    if m:
+        from tools.ghost_operator import switch_virtual_desktop
+        return switch_virtual_desktop(m.group(1))
+
     m = re.search(r'\b(cambi[aá]|pas[aá]|ir? [aá]|switch)\s+[aá]?\s+(.+?)(?:\s+por favor|$)', t)
     if m:
         target = m.group(2).strip()
         # Evitar falsos positivos con frases como "cambiar de tema"
-        if len(target) > 2 and not re.search(r'\b(tema|idioma|modo|color)\b', target):
+        if len(target) > 2 and not re.search(r'\b(tema|idioma|modo|color|escritorio)\b', target):
             return focus_window(target)
 
     # ── Abrir apps ────────────────────────────────────────────────────────────

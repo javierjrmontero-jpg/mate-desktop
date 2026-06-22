@@ -284,3 +284,34 @@ def get_cursor_position() -> str:
         return f"El cursor está en {x}, {y}."
     except Exception as e:
         return f"Error: {e}"
+
+
+# ─── Escritorios Virtuales ────────────────────────────────────────────────────
+
+def new_virtual_desktop() -> str:
+    try:
+        import pyautogui
+        pyautogui.hotkey("win", "ctrl", "d")
+        return "Nuevo escritorio virtual creado."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def switch_virtual_desktop(direction: str = "right") -> str:
+    try:
+        import pyautogui
+        key = "right" if direction.lower() in ("right", "derecha", "siguiente") else "left"
+        pyautogui.hotkey("win", "ctrl", key)
+        label = "siguiente" if key == "right" else "anterior"
+        return f"Cambiado al escritorio virtual {label}."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def close_virtual_desktop() -> str:
+    try:
+        import pyautogui
+        pyautogui.hotkey("win", "ctrl", "f4")
+        return "Escritorio virtual cerrado."
+    except Exception as e:
+        return f"Error: {e}"
