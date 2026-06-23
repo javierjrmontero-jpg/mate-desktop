@@ -1290,4 +1290,56 @@ def detect_and_execute(text: str) -> Optional[str]:
         from tools.ghost_operator import click_element
         return click_element(m.group(1).strip())
 
+    # ── Domótica ──────────────────────────────────────────────────────────────
+
+    # "encendé/prendé la luz del living" / "apagá el ventilador" / "toggle el enchufe"
+    m = re.search(
+        r'\b(encend[eé]|prend[eé]|activ[aá])\s+(?:el\s+|la\s+|los\s+|las\s+)?(.+)',
+        t
+    )
+    if m and not re.search(r'\b(spotify|m[uú]sica|canc?i[oó]n|volumen|pantalla|monitor|pc|computadora|aplicaci[oó]n)\b', t):
+        from tools.domotica_tools import domotica_on
+        return domotica_on(m.group(2).strip())
+
+    m = re.search(
+        r'\b(apag[aá]|desactiv[aá])\s+(?:el\s+|la\s+|los\s+|las\s+)?(.+)',
+        t
+    )
+    if m and not re.search(r'\b(spotify|m[uú]sica|pantalla|monitor|pc|computadora)\b', t):
+        from tools.domotica_tools import domotica_off
+        return domotica_off(m.group(2).strip())
+
+    m = re.search(
+        r'\b(cambi[aá]|altern[aá]|toggle)\s+(?:el\s+|la\s+|los\s+|las\s+)?(.+)',
+        t
+    )
+    if m and re.search(r'\b(luz|luce[sz]|enchufe|dispositivo|ventilador|aire|calefacci[oó]n)\b', t):
+        from tools.domotica_tools import domotica_toggle
+        return domotica_toggle(m.group(2).strip())
+
+    # "qué temperatura hay" / "sensores" / "humedad"
+    if re.search(r'\b(temperatura|humedad|sensores?|qu[eé]\s+(temperatura|humedad)\s+hay|c[oó]mo\s+est[aáa]n?\s+los\s+sensores)\b', t):
+        from tools.domotica_tools import domotica_sensors
+        return domotica_sensors()
+
+    # "listá los dispositivos" / "qué dispositivos domóticos tengo"
+    if re.search(r'\b(list[aá]|mostr[aá]|cu[aá]les?\s+son)\s+(?:los\s+|mis\s+)?dispositivos?\s*(dom[oó]ticos?|inteligentes?|conectados?)?\b', t) or \
+       re.search(r'\b(qu[eé]|cu[aá]les?)\s+dispositivos?\s+(dom[oó]ticos?|inteligentes?|tengo|hay)\b', t):
+        from tools.domotica_tools import domotica_list
+        return domotica_list()
+
+    # "activá la escena cine" / "activá el modo noche"
+    m = re.search(r'\b(?:activ[aá]|encend[eé])\s+(?:la\s+escena|el\s+modo)\s+(.+)', t)
+    if m:
+        from tools.domotica_tools import domotica_scene
+        return domotica_scene(m.group(1).strip())
+
+    # "brillo al 50%" / "ponele brillo 80 a la luz del living"
+    m = re.search(r'\bbrillo\s+(?:al?\s+)?(\d+)\s*%?\s*(?:a\s+(?:la\s+|el\s+)?(.+))?', t)
+    if m:
+        pct = int(m.group(1))
+        device = m.group(2).strip() if m.group(2) else "luz"
+        from tools.domotica_tools import domotica_brightness
+        return domotica_brightness(device, pct)
+
     return None  # → delegar al API de MATE
