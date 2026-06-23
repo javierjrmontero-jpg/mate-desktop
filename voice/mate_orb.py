@@ -347,6 +347,15 @@ class VoiceWorker(QThread):
         _base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
         _ww_model = str(_base / "models" / "oye_mate.onnx")
         ww = WakeModel(wakeword_models=[_ww_model], inference_framework="onnx")
+        # MED-7: verificar integridad del modelo antes de cargarlo
+        try:
+            from model_integrity import verify_or_register
+            if not verify_or_register():
+                logger.error("MED-7: modelo Whisper comprometido. Abortando.")
+                self.state_changed.emit(ERROR)
+                return
+        except Exception as _ie:
+            logger.warning(f"MED-7: verificación de integridad omitida: {_ie}")
         stt  = faster_whisper.WhisperModel("medium", device="cpu", compute_type="int8")
 
         # TTS via win32com SAPI5 directo (más confiable en PyInstaller que pyttsx3)

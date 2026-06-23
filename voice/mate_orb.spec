@@ -24,6 +24,7 @@ a = Analysis(
         (str(TOOLS_DIR / "*.py"), "tools"),
         (str(VOICE_DIR / "secure_config.py"), "."),
         (str(VOICE_DIR / "mate_setup.py"), "."),
+        (str(VOICE_DIR / "model_integrity.py"), "."),
         (str(VOICE_DIR / ".env.example"), "."),
         *ow_datas,
     ],
