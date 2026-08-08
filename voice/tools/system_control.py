@@ -1037,4 +1037,73 @@ def detect_and_execute(text: str) -> Optional[str]:
         from tools.calendar_tools import delete_event
         return delete_event(m.group(1).strip())
 
+    # ── Graphiti — grafo de memoria (PRO) ────────────────────────────────────
+    # "estado del grafo" / "graphiti activo?"
+    if re.search(r'\b(gr[aá]fico?\s+de\s+memoria|graphiti\s+(activo|disponible|estado)|estado\s+del\s+grafo)\b', t):
+        from tools.graphiti_tools import graphiti_status
+        return graphiti_status()
+
+    # "qué sabés de X según el grafo" / "consultá el grafo sobre X"
+    m = re.search(r'\b(?:qu[eé]\s+sab[eé]s\s+(?:de|sobre)|consult[aá]\s+el\s+grafo\s+(?:sobre|de)|qu[eé]\s+dice\s+el\s+grafo\s+(?:de|sobre))\s+(.+)', t)
+    if m:
+        from tools.graphiti_tools import what_do_you_know_about
+        return what_do_you_know_about(m.group(1).strip())
+
+    # "qué hay en el grafo" / "mostrá la memoria del grafo" / "hechos recientes"
+    if re.search(r'\b(qu[eé]\s+hay\s+en\s+el\s+grafo|hechos\s+recientes|memori[aá]\s+del\s+grafo|mostr[aá]\s+(la\s+)?memori[aá]\s+del\s+grafo)\b', t):
+        from tools.graphiti_tools import recent_memory
+        return recent_memory()
+
+    # ── Obsidian (PRO) ────────────────────────────────────────────────────────
+    # Estado: "obsidian activo?" / "está Obsidian?"
+    if re.search(r'\b(obsidian\s+(activo|abierto|funcionando|est[aá])|est[aá]\s+obsidian)\b', t):
+        from tools.obsidian_tools import obsidian_status
+        return obsidian_status()
+
+    # Crear nota: "crea una nota en obsidian sobre X"
+    m = re.search(r'\b(?:cre[aá](?:me)?\s+(?:una?\s+)?nota\s+(?:en\s+obsidian\s+)?(?:sobre\s+|de\s+|llamada?\s+)?|obsidian[\s:]+cre[aá]\s+nota\s+)(.+)', t)
+    if m and re.search(r'\bobsidian\b', t):
+        from tools.obsidian_tools import create_note
+        return create_note(m.group(1).strip(), "")
+
+    # Agregar a nota: "agregá en obsidian a la nota X que Y"
+    m = re.search(r'\b(?:agre[gá][aá](?:me)?|anot[aá](?:me)?)\s+(?:en\s+obsidian\s+)?(?:a\s+la\s+nota\s+)?(.+?)\s+que\s+(.+)', t)
+    if m and re.search(r'\bobsidian\b', t):
+        from tools.obsidian_tools import append_to_note
+        return append_to_note(m.group(1).strip(), m.group(2).strip())
+
+    # Nota diaria: "anotá en mi diario X" / "agregá a la nota diaria X" / "obsidian diario X"
+    m = re.search(r'\b(?:anot[aá](?:me)?\s+en\s+(?:mi\s+)?(?:diario|nota\s+diaria)|agre[gá][aá](?:me)?\s+(?:a\s+la\s+)?nota\s+diaria|obsidian\s+diario[\s:]+)\s*(.+)', t)
+    if m:
+        from tools.obsidian_tools import append_to_daily_note
+        return append_to_daily_note(m.group(1).strip())
+
+    # Leer nota: "leé la nota de obsidian sobre X"
+    m = re.search(r'\b(?:le[eé]|mostr[aá]|abr[íi])\s+(?:la\s+)?nota\s+(?:de\s+obsidian\s+)?(?:sobre\s+|de\s+|llamada?\s+)?(.+)', t)
+    if m and re.search(r'\bobsidian\b', t):
+        from tools.obsidian_tools import read_note
+        return read_note(m.group(1).strip())
+
+    # Nota de hoy: "qué hay en mi nota diaria" / "leé mi diario"
+    if re.search(r'\b(qu[eé]\s+hay\s+en\s+(mi\s+)?nota\s+diaria|le[eé]\s+(mi\s+)?diario|nota\s+de\s+hoy\s+de\s+obsidian|diario\s+de\s+hoy)\b', t):
+        from tools.obsidian_tools import get_daily_note
+        return get_daily_note()
+
+    # Buscar en Obsidian: "buscá en obsidian X"
+    m = re.search(r'\b(?:busc[aá](?:me)?)\s+en\s+obsidian\s+(.+)', t)
+    if m:
+        from tools.obsidian_tools import search_notes
+        return search_notes(m.group(1).strip())
+
+    # Listar notas: "qué notas tengo en obsidian" / "listá las notas de obsidian"
+    if re.search(r'\b(qu[eé]\s+notas\s+(tengo|hay)\s+(?:en\s+)?obsidian|list[aá]\s+(?:las\s+)?notas\s+(?:de\s+)?obsidian)\b', t):
+        from tools.obsidian_tools import list_notes
+        return list_notes()
+
+    # Ingerir nota a memoria: "metele la nota X de obsidian a tu memoria"
+    m = re.search(r'\b(?:ingres[aá]|guar[dá][aá]|met[eé]le?)\s+(?:la\s+)?nota\s+(.+?)\s+(?:de\s+obsidian\s+)?(?:a\s+(?:tu|la)\s+memoria)\b', t)
+    if m:
+        from tools.obsidian_tools import ingest_note_to_memory
+        return ingest_note_to_memory(m.group(1).strip())
+
     return None  # → delegar al API de MATE
