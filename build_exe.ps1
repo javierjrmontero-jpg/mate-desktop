@@ -57,6 +57,20 @@ Push-Location $VoiceDir
 & $PyExe -m PyInstaller mate_orb.spec --noconfirm
 Pop-Location
 
+# 3b. Copiar configuracion del dispositivo al output
+Write-Host ""
+Write-Host "[3b/4] Copiando configuracion a dist\MATE\..." -ForegroundColor Yellow
+$DistMate = Join-Path $VoiceDir "dist\MATE"
+foreach ($item in @(".env", "mate.crt")) {
+    $src = Join-Path $VoiceDir $item
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $DistMate $item) -Force
+        Write-Host "  OK - $item" -ForegroundColor Green
+    } else {
+        Write-Host "  FALTA - $item (crear en voice\ antes del proximo build)" -ForegroundColor DarkYellow
+    }
+}
+
 # 4. Verificar output
 Write-Host ""
 Write-Host "[4/4] Verificando output..." -ForegroundColor Yellow

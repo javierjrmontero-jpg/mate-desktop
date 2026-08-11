@@ -63,13 +63,15 @@ MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
 # CRIT-2: TLS verification. Por defecto True (CAs del sistema).
 # Setear MATE_TLS_VERIFY a la ruta de un .crt para cert pinning,
 # o a "false" solo en entornos de desarrollo local con cert autofirmado.
-_tls_env = os.getenv("MATE_TLS_VERIFY", "true").strip().lower()
-if _tls_env == "false":
+_tls_raw = os.getenv("MATE_TLS_VERIFY", "true").strip()
+if _tls_raw.lower() == "false":
     MATE_TLS_VERIFY: bool | str = False
-elif _tls_env == "true" or _tls_env == "":
+elif _tls_raw.lower() in ("true", ""):
     MATE_TLS_VERIFY = True
 else:
-    MATE_TLS_VERIFY = _tls_env  # ruta a CA bundle
+    # Ruta a CA bundle. Si es relativa se resuelve junto al EXE, así la carpeta
+    # dist/MATE/ se puede comprimir y usar en otra PC sin editar el .env.
+    MATE_TLS_VERIFY = _tls_raw if os.path.isabs(_tls_raw) else os.path.join(_exe_dir, _tls_raw)
 ORB_SIZE   = 180
 NOTIFY_FILE  = os.path.join(_exe_dir, ".mate_queue.json")
 TOKEN_BRIDGE_PORT = 27125   # mini HTTP server para recibir token del frontend web
