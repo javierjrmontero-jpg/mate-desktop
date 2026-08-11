@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Guarda el token de MATE en .mate_token para que mate_orb.py lo use.
+Guarda el token de MATE cifrado con DPAPI para que mate_orb.py lo use.
 Uso: python mate_login.py
 """
 import os, getpass, json
 import urllib.request, urllib.error, ssl
 
-MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
-TOKEN_FILE = os.path.join(os.path.dirname(__file__), ".mate_token")
+MATE_URL = os.getenv("MATE_URL", "https://mate.local")
 
 def login(email: str, password: str) -> str:
     payload = json.dumps({"email": email, "password": password}).encode()
@@ -28,9 +27,9 @@ def main():
     password = getpass.getpass("Contraseña: ")
     try:
         token = login(email, password)
-        with open(TOKEN_FILE, "w") as f:
-            f.write(token)
-        print(f"✓ Token guardado en {TOKEN_FILE}")
+        from secure_config import save_token
+        save_token(token)
+        print(f"✓ Token guardado cifrado con DPAPI (.mate_token.bin)")
         print(f"  Token: {token[:40]}…")
     except Exception as e:
         print(f"✗ Error: {e}")

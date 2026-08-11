@@ -17,7 +17,9 @@ from datetime import datetime, timedelta, date
 
 logger = logging.getLogger(__name__)
 
-_DATA_DIR   = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
+_DATA_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
+
+# MED-2/MED-3: calendario y token OAuth guardados solo en local (no OneDrive)
 _LOCAL_CAL  = _DATA_DIR / ".mate_calendar.json"
 _GCAL_CREDS = os.environ.get("GOOGLE_CREDENTIALS_PATH", "")
 _TOKEN_PATH = str(_DATA_DIR / ".gcal_token.json")

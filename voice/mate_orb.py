@@ -30,9 +30,18 @@ except ImportError:
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
-# Config — carga .env local si existe (portabilidad entre PCs)
+# Config — carga credenciales cifradas (DPAPI) o fallback a .env (dev/legacy)
 # ---------------------------------------------------------------------------
 _exe_dir  = str(Path(sys.executable).parent) if getattr(sys, "frozen", False) else os.path.dirname(__file__)
+
+# 1. Intentar config cifrada (HIGH-1 + Setup Wizard)
+try:
+    from secure_config import inject_config_into_env
+    inject_config_into_env()
+except Exception:
+    pass
+
+# 2. Fallback: .env en texto plano (desarrollo / instalaciones previas)
 _env_file = os.path.join(_exe_dir, ".env")
 if os.path.exists(_env_file):
     with open(_env_file, encoding="utf-8") as _ef:
@@ -42,12 +51,30 @@ if os.path.exists(_env_file):
                 _k, _v = _line.split("=", 1)
                 os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
 
+# 3. Si falta MATE_URL lanzar wizard de primer arranque
+if not os.environ.get("MATE_URL", "").strip():
+    try:
+        from mate_setup import run_setup
+        run_setup()
+    except Exception as _e:
+        print(f"[MATE] Setup wizard falló: {_e}")
+
 MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
+# CRIT-2: TLS verification. Por defecto True (CAs del sistema).
+# Setear MATE_TLS_VERIFY a la ruta de un .crt para cert pinning,
+# o a "false" solo en entornos de desarrollo local con cert autofirmado.
+_tls_env = os.getenv("MATE_TLS_VERIFY", "true").strip().lower()
+if _tls_env == "false":
+    MATE_TLS_VERIFY: bool | str = False
+elif _tls_env == "true" or _tls_env == "":
+    MATE_TLS_VERIFY = True
+else:
+    MATE_TLS_VERIFY = _tls_env  # ruta a CA bundle
 ORB_SIZE   = 180
-TOKEN_FILE        = os.path.join(_exe_dir, ".mate_token")
-NOTIFY_FILE       = os.path.join(_exe_dir, ".mate_queue.json")
+NOTIFY_FILE  = os.path.join(_exe_dir, ".mate_queue.json")
 TOKEN_BRIDGE_PORT = 27125   # mini HTTP server para recibir token del frontend web
                             # (27123/27124 los usa el plugin Local REST API de Obsidian)
+WHISPER_MODEL     = "small" # small+beam_size=1 baja el STT de ~11s a ~3s en CPU
 CONV_TIMEOUT = 10.0   # segundos sin habla antes de cerrar la conversación automáticamente
 
 # ---------------------------------------------------------------------------
@@ -323,7 +350,16 @@ class VoiceWorker(QThread):
         _base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
         _ww_model = str(_base / "models" / "oye_mate.onnx")
         ww = WakeModel(wakeword_models=[_ww_model], inference_framework="onnx")
-        stt  = faster_whisper.WhisperModel("small", device="cpu", compute_type="int8")
+        # MED-7: verificar integridad del modelo antes de cargarlo
+        try:
+            from model_integrity import verify_or_register
+            if not verify_or_register(WHISPER_MODEL):
+                logger.error("MED-7: modelo Whisper comprometido. Abortando.")
+                self.state_changed.emit(ERROR)
+                return
+        except Exception as _ie:
+            logger.warning(f"MED-7: verificación de integridad omitida: {_ie}")
+        stt  = faster_whisper.WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
 
         # TTS via win32com SAPI5 directo (más confiable en PyInstaller que pyttsx3)
         import pythoncom
@@ -460,6 +496,10 @@ class VoiceWorker(QThread):
                         _sys.path.insert(0, _os.path.dirname(__file__))
                     from tools.system_control import detect_and_execute
                     local_resp = detect_and_execute(text)
+                    if local_resp == "[DICTATION_MODE]":
+                        self._run_dictation_mode(stt, SR, NATIVE_SR)
+                        self.state_changed.emit(LISTENING)
+                        continue
                     if local_resp:
                         logger.info(f"[LOCAL] {local_resp}")
                         self.response_ready.emit(local_resp)
@@ -481,18 +521,34 @@ class VoiceWorker(QThread):
                     break
 
                 # ── 5b. Dev Agent: ejecutar código si el API lo indica ────
-                # El API puede incluir [RUN_PY:código] para ejecución automática.
+                # CRIT-1: requiere confirmación explícita del usuario antes de ejecutar.
                 import re as _re
                 _run_match = _re.search(r'\[RUN_PY:(.+?)\]', reply, _re.DOTALL)
                 if _run_match:
                     try:
                         from tools.dev_agent_tools import run_python
-                        _code   = _run_match.group(1).strip()
-                        _result = run_python(_code)
-                        # Reemplazar el marcador por el resultado en la respuesta
-                        reply   = _re.sub(r'\[RUN_PY:.+?\]', _result, reply, flags=_re.DOTALL).strip()
-                        if not reply:
-                            reply = _result
+                        _code = _run_match.group(1).strip()
+                        _confirmed = False
+                        try:
+                            import tkinter as _tk
+                            import tkinter.messagebox as _mb
+                            _root = _tk.Tk(); _root.withdraw()
+                            _confirmed = _mb.askyesno(
+                                "MATE — Ejecutar código",
+                                f"El servidor solicita ejecutar código Python:\n\n{_code[:300]}\n\n¿Permitir?",
+                                icon="warning",
+                            )
+                            _root.destroy()
+                        except Exception:
+                            pass
+                        if _confirmed:
+                            _result = run_python(_code)
+                            reply = _re.sub(r'\[RUN_PY:.+?\]', _result, reply, flags=_re.DOTALL).strip()
+                            if not reply:
+                                reply = _result
+                        else:
+                            reply = _re.sub(r'\[RUN_PY:.+?\]', '[ejecución cancelada]', reply, flags=_re.DOTALL).strip()
+                            logger.info("Dev Agent: ejecución rechazada por el usuario")
                     except Exception as _de:
                         logger.warning(f"Dev Agent exec error: {_de}")
 
@@ -629,7 +685,7 @@ class VoiceWorker(QThread):
             with requests.post(
                 f"{self.mate_url}/api/v1/chat",
                 json=payload, headers=headers,
-                stream=True, timeout=60, verify=False,
+                stream=True, timeout=60, verify=MATE_TLS_VERIFY,
             ) as r:
                 for raw in r.iter_lines():
                     if not self._running: break
@@ -719,6 +775,51 @@ class VoiceWorker(QThread):
             time.sleep(0.2)
             self._speaking_flag.clear()
 
+    def _run_dictation_mode(self, stt, sr: int, native_sr: int):
+        """
+        Modo dictado: acumula transcripciones hasta que el usuario diga 'listo',
+        luego escribe todo el texto acumulado en la ventana activa.
+        """
+        self.state_changed.emit(SPEAKING)
+        self._speak("Modo dictado activado. Hablá cuando quieras. Decí 'listo' para escribir, o 'cancelar' para salir.")
+        accumulated = []
+        while self._running:
+            self.state_changed.emit(LISTENING)
+            audio = self._capture(sr, silence_sec=1.2, max_sec=30.0, native_sr=native_sr)
+            if audio is None:
+                break
+            self.state_changed.emit(PROCESSING)
+            text = self._transcribe(stt, audio)
+            if not text.strip():
+                continue
+            t_lower = text.lower().strip()
+            if re.search(r'\b(cancelar|cancel[aá]|abort[aá]|sal[ií]r)\b', t_lower):
+                self.state_changed.emit(SPEAKING)
+                self._speak("Dictado cancelado.")
+                return
+            if re.search(r'\b(listo|terminar|termin[eé]|fin|fin\s+del\s+dictado)\b', t_lower):
+                break
+            accumulated.append(text.strip())
+            logger.info(f"[DICTATION] +'{text.strip()}'")
+
+        if not accumulated:
+            self.state_changed.emit(SPEAKING)
+            self._speak("Sin texto dictado.")
+            return
+
+        full_text = " ".join(accumulated)
+        self.state_changed.emit(SPEAKING)
+        try:
+            import sys as _sys, os as _os
+            if _os.path.dirname(__file__) not in _sys.path:
+                _sys.path.insert(0, _os.path.dirname(__file__))
+            from tools.ghost_operator import type_text
+            type_text(full_text)
+            self._speak(f"Texto escrito. {len(full_text)} caracteres.")
+        except Exception as e:
+            logger.error(f"Dictation type_text error: {e}")
+            self._speak("Error escribiendo el texto.")
+
     def _barge_in_monitor(self, native_sr: int = 16000):
         """
         Corre en hilo paralelo durante TTS.
@@ -801,8 +902,9 @@ class MateOrbWindow(QMainWindow):
         if token:
             self._start_worker(token)
         else:
-            logger.warning("No se encontró token. Ejecutá mate_login.py primero.")
+            logger.warning("No se encontró token. Abriendo setup para hacer login…")
             self.orb.set_state(ERROR)
+            QTimer.singleShot(500, self._prompt_login)
 
         # Timer de notificaciones proactivas (cada 10s)
         self._notif_timer = QTimer(self)
@@ -815,12 +917,27 @@ class MateOrbWindow(QMainWindow):
         )
         self._bridge_thread.start()
 
+    # --- login prompt -------------------------------------------------------
+    def _prompt_login(self):
+        try:
+            from mate_setup import run_setup
+            run_setup(force=True)
+            token = self._load_token()
+            if token:
+                self._start_worker(token)
+                self.orb.set_state(IDLE)
+            else:
+                logger.warning("Setup cerrado sin token. MATE inactivo.")
+        except Exception as e:
+            logger.error(f"Setup wizard error: {e}")
+
     # --- token bridge (shared session con web) ------------------------------
     def _run_token_bridge(self):
         """
         Mini HTTP server en 127.0.0.1:TOKEN_BRIDGE_PORT.
         El frontend web hace POST /set-token {"token":"..."} después del login.
         Permite que web y desktop compartan la misma sesión sin login doble.
+        El token se persiste cifrado con DPAPI (secure_config), igual que el wizard.
         """
         from http.server import HTTPServer, BaseHTTPRequestHandler
         win = self
@@ -843,7 +960,12 @@ class MateOrbWindow(QMainWindow):
                         body = json.loads(self.rfile.read(length))
                         token = body.get("token", "").strip()
                         if token:
-                            Path(TOKEN_FILE).write_text(token, encoding="utf-8")
+                            # HIGH-1: persistir cifrado con DPAPI, nunca en texto plano
+                            try:
+                                from secure_config import save_token
+                                save_token(token)
+                            except Exception as _se:
+                                logger.error(f"[TokenBridge] No se pudo cifrar el token: {_se}")
                             win._sig_token.emit(token)   # hilo seguro → Qt main thread
                         self.send_response(200)
                         self._cors()
@@ -876,12 +998,18 @@ class MateOrbWindow(QMainWindow):
         else:
             logger.info("[TokenBridge] Iniciando worker con token del frontend")
             self._start_worker(token)
+            self.orb.set_state(IDLE)
 
     # --- token --------------------------------------------------------------
     def _load_token(self) -> str | None:
-        if os.path.exists(TOKEN_FILE):
-            t = open(TOKEN_FILE).read().strip()
-            return t if t else None
+        # HIGH-1: intentar token cifrado con DPAPI primero
+        try:
+            from secure_config import load_token
+            t = load_token()
+            if t:
+                return t
+        except Exception:
+            pass
         return None
 
     # --- worker -------------------------------------------------------------
@@ -928,9 +1056,19 @@ class MateOrbWindow(QMainWindow):
             try:
                 with open(NOTIFY_FILE, "r", encoding="utf-8") as f:
                     queued = json.load(f)
-                if queued:
+                if queued and isinstance(queued, list):
                     os.remove(NOTIFY_FILE)
-                    messages.extend(queued)
+                    # HIGH-4: validar contenido — solo strings, sin marcadores MATE, longitud acotada
+                    import re as _re
+                    safe = []
+                    for m in queued:
+                        if not isinstance(m, str):
+                            continue
+                        m = _re.sub(r'\[RUN_PY:.+?\]', '', m, flags=_re.DOTALL)
+                        m = m[:500].strip()
+                        if m:
+                            safe.append(m)
+                    messages.extend(safe)
             except Exception as e:
                 logger.error(f"Error leyendo notificaciones: {e}")
 

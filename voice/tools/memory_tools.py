@@ -5,6 +5,7 @@ Memoria persistente entre sesiones: facts, preferencias, historial.
 Almacena en .mate_memory.json junto al ejecutable.
 """
 
+import os
 import sys
 import json
 import logging
@@ -14,6 +15,8 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 _DATA_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
+
+# MED-3: datos de memoria guardados solo en local (no OneDrive) para evitar sync en texto plano
 _MEM_FILE = _DATA_DIR / ".mate_memory.json"
 
 
@@ -86,6 +89,14 @@ def set_preference(pref: str, value: str) -> str:
     return f"Preferencia guardada: {pref} = {value}."
 
 
+def _sanitize_for_prompt(s: str) -> str:
+    """HIGH-3: elimina marcadores de protocolo MATE y limita longitud para evitar prompt injection."""
+    import re
+    s = re.sub(r'\[RUN_PY:.+?\]', '[BLOQUEADO]', s, flags=re.DOTALL)
+    s = re.sub(r'\[(STATUS|CONV|CONFIRM_EMAIL):', '[', s)
+    return s[:200]
+
+
 def get_context_summary() -> str:
     """
     Retorna un resumen del contexto del usuario para inyectar en prompts del API.
@@ -97,10 +108,14 @@ def get_context_summary() -> str:
     parts = []
     if data["facts"]:
         facts_str = ", ".join(
-            f"{k}: {v['value']}" for k, v in list(data["facts"].items())[:6]
+            f"{k}: {_sanitize_for_prompt(v['value'])}"
+            for k, v in list(data["facts"].items())[:6]
         )
         parts.append(f"Datos del usuario: {facts_str}")
     if data["preferences"]:
-        prefs_str = ", ".join(f"{k}: {v}" for k, v in data["preferences"].items())
+        prefs_str = ", ".join(
+            f"{k}: {_sanitize_for_prompt(str(v))}"
+            for k, v in data["preferences"].items()
+        )
         parts.append(f"Preferencias: {prefs_str}")
     return " | ".join(parts)

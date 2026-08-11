@@ -51,7 +51,7 @@ def get_weather() -> str:
 
         # Ubicación por IP (fallback: Buenos Aires)
         try:
-            loc = requests.get("http://ip-api.com/json/", timeout=5).json()
+            loc = requests.get("https://ipapi.co/json/", timeout=5).json()
             lat   = loc["lat"]
             lon   = loc["lon"]
             city  = loc.get("city", "tu ciudad")

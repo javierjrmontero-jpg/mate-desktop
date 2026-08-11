@@ -32,21 +32,32 @@ _ALIASES: dict[str, Path] = {
 }
 
 _READABLE_EXTENSIONS = {
-    ".txt", ".md", ".log", ".csv", ".json",
-    ".py", ".yaml", ".yml", ".ini", ".cfg", ".env", ".html", ".xml",
+    ".txt", ".md", ".log", ".csv",
+    ".yaml", ".yml", ".html",
 }
+
+# Directorios permitidos para operaciones de archivo por voz (HIGH-2)
+_ALLOWED_ROOTS = [
+    _HOME / "Desktop",
+    _HOME / "Documents",
+    _HOME / "Downloads",
+    _HOME / "Pictures",
+    _HOME / "Music",
+    _HOME / "Videos",
+    _HOME / "OneDrive",
+]
 
 
 def _resolve(path_str: str) -> Path:
-    """Convierte alias o ruta relativa a Path absoluto."""
+    """Convierte alias o ruta relativa a Path absoluto dentro de dirs permitidos."""
     s = path_str.strip().lower()
     if s in _ALIASES:
         return _ALIASES[s]
     p = Path(path_str)
-    if p.is_absolute():
-        return p
-    # relativo al home como fallback
-    return _HOME / path_str
+    resolved = (_HOME / path_str).resolve() if not p.is_absolute() else p.resolve()
+    if not any(str(resolved).startswith(str(root.resolve())) for root in _ALLOWED_ROOTS):
+        raise PermissionError(f"Ruta fuera del área permitida: {resolved}")
+    return resolved
 
 
 def list_directory(path_str: str) -> str:

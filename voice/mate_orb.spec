@@ -22,6 +22,9 @@ a = Analysis(
     datas=[
         (str(MODELS_DIR / "oye_mate.onnx"), "models"),
         (str(TOOLS_DIR / "*.py"), "tools"),
+        (str(VOICE_DIR / "secure_config.py"), "."),
+        (str(VOICE_DIR / "mate_setup.py"), "."),
+        (str(VOICE_DIR / "model_integrity.py"), "."),
         (str(VOICE_DIR / ".env.example"), "."),
         *ow_datas,
     ],
@@ -42,6 +45,7 @@ a = Analysis(
         "win32com", "win32com.client", "pythoncom",
         # Windows
         "win32gui", "win32con", "win32api", "win32process",
+        "win32crypt", "win32security",
         "pywintypes", "winreg", "winsound",
         "comtypes", "comtypes.client",
         "pycaw", "pycaw.pycaw",
@@ -55,6 +59,8 @@ a = Analysis(
         "requests", "feedparser", "duckduckgo_search",
         # Spotify
         "spotipy", "spotipy.oauth2", "spotipy.util",
+        # Setup y config cifrada
+        "secure_config", "mate_setup",
         # Tools (imports lazy — PyInstaller no los detecta)
         "tools", "tools.system_control", "tools.web_tools",
         "tools.spotify_tools", "tools.file_tools",
