@@ -44,8 +44,10 @@ if os.path.exists(_env_file):
 
 MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
 ORB_SIZE   = 180
-TOKEN_FILE   = os.path.join(_exe_dir, ".mate_token")
-NOTIFY_FILE  = os.path.join(_exe_dir, ".mate_queue.json")
+TOKEN_FILE        = os.path.join(_exe_dir, ".mate_token")
+NOTIFY_FILE       = os.path.join(_exe_dir, ".mate_queue.json")
+TOKEN_BRIDGE_PORT = 27125   # mini HTTP server para recibir token del frontend web
+                            # (27123/27124 los usa el plugin Local REST API de Obsidian)
 CONV_TIMEOUT = 10.0   # segundos sin habla antes de cerrar la conversación automáticamente
 
 # ---------------------------------------------------------------------------
@@ -321,7 +323,7 @@ class VoiceWorker(QThread):
         _base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
         _ww_model = str(_base / "models" / "oye_mate.onnx")
         ww = WakeModel(wakeword_models=[_ww_model], inference_framework="onnx")
-        stt  = faster_whisper.WhisperModel("medium", device="cpu", compute_type="int8")
+        stt  = faster_whisper.WhisperModel("small", device="cpu", compute_type="int8")
 
         # TTS via win32com SAPI5 directo (más confiable en PyInstaller que pyttsx3)
         import pythoncom
@@ -585,7 +587,7 @@ class VoiceWorker(QThread):
         segs, _ = model.transcribe(
             f32,
             language="es",
-            beam_size=5,
+            beam_size=1,
             condition_on_previous_text=False,
             no_speech_threshold=0.5,
             temperature=0.0,
@@ -763,6 +765,8 @@ class MateOrbWindow(QMainWindow):
 
     # señal para actualizar orbe desde cualquier hilo
     _sig_state = pyqtSignal(str)
+    # señal emitida por el token bridge cuando llega un token del frontend web
+    _sig_token = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -780,8 +784,9 @@ class MateOrbWindow(QMainWindow):
         self.orb.setGeometry(0, 0, ORB_SIZE, ORB_SIZE)
         self.orb.clicked.connect(self._on_click)
 
-        # Señal interna (hilo seguro)
+        # Señales internas (hilo seguro)
         self._sig_state.connect(self.orb.set_state)
+        self._sig_token.connect(self._on_token_received)
 
         # Posición inicial — esquina inferior derecha
         screen = QApplication.primaryScreen().geometry()
@@ -803,6 +808,74 @@ class MateOrbWindow(QMainWindow):
         self._notif_timer = QTimer(self)
         self._notif_timer.timeout.connect(self._check_notifications)
         self._notif_timer.start(10_000)
+
+        # Servidor de token bridge (recibe JWT del frontend web vía localhost)
+        self._bridge_thread = threading.Thread(
+            target=self._run_token_bridge, daemon=True
+        )
+        self._bridge_thread.start()
+
+    # --- token bridge (shared session con web) ------------------------------
+    def _run_token_bridge(self):
+        """
+        Mini HTTP server en 127.0.0.1:TOKEN_BRIDGE_PORT.
+        El frontend web hace POST /set-token {"token":"..."} después del login.
+        Permite que web y desktop compartan la misma sesión sin login doble.
+        """
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        win = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            def _cors(self):
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+            def do_OPTIONS(self):          # preflight CORS
+                self.send_response(200)
+                self._cors()
+                self.end_headers()
+
+            def do_POST(self):
+                if self.path == "/set-token":
+                    try:
+                        length = int(self.headers.get("Content-Length", 0))
+                        body = json.loads(self.rfile.read(length))
+                        token = body.get("token", "").strip()
+                        if token:
+                            Path(TOKEN_FILE).write_text(token, encoding="utf-8")
+                            win._sig_token.emit(token)   # hilo seguro → Qt main thread
+                        self.send_response(200)
+                        self._cors()
+                        self.end_headers()
+                        self.wfile.write(b'{"ok":true}')
+                    except Exception as e:
+                        logger.error(f"[TokenBridge] {e}")
+                        self.send_response(500)
+                        self.end_headers()
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def log_message(self, *args):
+                pass   # suprimir logs de acceso HTTP
+
+        try:
+            server = HTTPServer(("127.0.0.1", TOKEN_BRIDGE_PORT), _Handler)
+            logger.info(f"[TokenBridge] Escuchando en 127.0.0.1:{TOKEN_BRIDGE_PORT}")
+            server.serve_forever()
+        except OSError as e:
+            logger.warning(f"[TokenBridge] Puerto {TOKEN_BRIDGE_PORT} no disponible: {e}")
+
+    def _on_token_received(self, token: str):
+        """Slot Qt — llamado cuando el frontend web envía el token post-login."""
+        logger.info("[TokenBridge] Token recibido desde frontend web")
+        if self.worker and self.worker._running:
+            self.worker.token = token
+            logger.info("[TokenBridge] Token actualizado en worker activo → orbe sigue verde")
+        else:
+            logger.info("[TokenBridge] Iniciando worker con token del frontend")
+            self._start_worker(token)
 
     # --- token --------------------------------------------------------------
     def _load_token(self) -> str | None:
