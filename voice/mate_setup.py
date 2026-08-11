@@ -223,10 +223,22 @@ class _SetupDialog:
         f4 = QFormLayout(t4)
         f4.setSpacing(10)
 
-        login_note = QLabel("Ingresá tus credenciales de MATE para obtener el token de acceso.")
+        login_note = QLabel(
+            "Si tu cuenta usa Microsoft o Google, iniciá sesión en el navegador: "
+            "MATE detecta el acceso automáticamente."
+        )
         login_note.setStyleSheet("color: #888; font-size: 11px;")
         login_note.setWordWrap(True)
         f4.addRow(login_note)
+
+        browser_btn = QPushButton("Iniciar sesión en el navegador (Microsoft / Google)")
+        browser_btn.clicked.connect(self._do_browser_login)
+        f4.addRow("", browser_btn)
+
+        sep = QLabel("— o con email y contraseña —")
+        sep.setStyleSheet("color: #666; font-size: 10px;")
+        sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        f4.addRow(sep)
 
         self._email = QLineEdit()
         self._email.setPlaceholderText("tu@email.com")
@@ -268,6 +280,46 @@ class _SetupDialog:
 
         self._dlg = dlg
         return dlg.exec()
+
+    def _do_browser_login(self):
+        """
+        Login OAuth (Microsoft / Google): abre la pagina de login web en el navegador.
+        Tras autenticarse, el frontend postea el token al token bridge del orbe
+        (127.0.0.1:27125), que lo guarda cifrado con DPAPI. Aca solo esperamos
+        a que el token aparezca para cerrar el wizard.
+        """
+        import webbrowser
+        from PyQt6.QtCore import QTimer
+
+        url = self._url.text().strip() or os.environ.get("MATE_URL", "https://mate.local")
+        webbrowser.open(f"{url}/login")
+
+        self._login_status.setStyleSheet("color: #aaa; font-size: 11px;")
+        self._login_status.setText("Esperando el inicio de sesión en el navegador…")
+
+        self._wait_secs = 0
+
+        def _check():
+            self._wait_secs += 1
+            try:
+                from secure_config import load_token
+                if load_token():
+                    self._poll.stop()
+                    self._login_status.setStyleSheet("color: #44ff88; font-size: 11px;")
+                    self._login_status.setText("✓ Sesión iniciada. Ya podés cerrar esta ventana.")
+                    return
+            except Exception:
+                pass
+            if self._wait_secs >= 180:      # 3 minutos
+                self._poll.stop()
+                self._login_status.setStyleSheet("color: #ff6666; font-size: 11px;")
+                self._login_status.setText(
+                    "No se detectó el inicio de sesión. Verificá que MATE esté abierto en el navegador."
+                )
+
+        self._poll = QTimer(self._dlg)
+        self._poll.timeout.connect(_check)
+        self._poll.start(1000)
 
     def _do_login(self):
         url      = self._url.text().strip() or os.environ.get("MATE_URL", "https://mate.local")
