@@ -556,6 +556,17 @@ class VoiceWorker(QThread):
 
                 self.response_ready.emit(reply)
 
+                # ── 5c. Registrar en la nota diaria de Obsidian ───────────
+                # Solo llegan acá los turnos que fueron al backend: los comandos
+                # locales (hora, volumen, apps) hacen `continue` antes y no se
+                # registran. En hilo aparte para no demorar el TTS.
+                if os.getenv("OBSIDIAN_API_KEY"):
+                    threading.Thread(
+                        target=self._log_to_obsidian,
+                        args=(text, reply),
+                        daemon=True,
+                    ).start()
+
                 # ── 6. TTS ────────────────────────────────────────────────
                 self.state_changed.emit(SPEAKING)
                 self._speak(reply)
@@ -570,6 +581,15 @@ class VoiceWorker(QThread):
                 self.state_changed.emit(LISTENING)
 
     # --- helpers ------------------------------------------------------------
+
+    def _log_to_obsidian(self, user_text: str, reply: str):
+        """Registra el intercambio en la nota diaria. Nunca interrumpe la conversación."""
+        try:
+            from tools.obsidian_tools import log_conversation
+            if log_conversation(user_text, reply):
+                logger.debug("[Obsidian] Intercambio registrado en la nota diaria")
+        except Exception as e:
+            logger.debug(f"[Obsidian] No se pudo registrar: {e}")
 
     def _capture(self, sr: int, silence_sec=1.0, max_sec=12.0, native_sr: int = 0):
         """
