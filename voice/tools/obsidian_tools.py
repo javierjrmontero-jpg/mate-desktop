@@ -145,6 +145,44 @@ def append_to_daily_note(content: str) -> str:
     return create_note(today, content)
 
 
+def log_conversation(user_text: str, mate_reply: str) -> bool:
+    """
+    Registra un intercambio de voz en la nota diaria.
+
+    Pensado para llamarse en segundo plano tras cada turno que fue al backend.
+    Silencioso: no habla ni interrumpe, solo retorna True/False.
+
+    Filtra lo trivial: intercambios muy cortos (saludos, confirmaciones) no
+    aportan como contexto posterior y solo ensucian la nota.
+    """
+    if not _OBSIDIAN_KEY:
+        return False
+    if not user_text or not mate_reply:
+        return False
+    # Umbral: respuestas breves suelen ser confirmaciones o saludos
+    if len(mate_reply.strip()) < 80 and len(user_text.split()) < 6:
+        return False
+
+    now = datetime.now().strftime("%H:%M")
+    clean_reply = mate_reply.strip().replace("\n", " ")
+    entry = (
+        f"\n\n**{now} — Vos:** {user_text.strip()}"
+        f"\n**MATE:** {clean_reply}"
+    )
+    status, _ = _request("POST", "/periodic/daily/", entry.encode("utf-8"))
+    if status in (200, 204):
+        return True
+    # Fallback si no hay plugin de notas periódicas: nota con la fecha de hoy
+    today = datetime.now().strftime("%Y-%m-%d")
+    folder = _VAULT_FOLDER
+    path = f"vault/{folder}/{today}.md"
+    status, _ = _request("POST", path, entry.encode("utf-8"))
+    if status in (200, 204):
+        return True
+    create_note(today, entry.lstrip("\n"))
+    return True
+
+
 def read_note(title: str, folder: str | None = None) -> str:
     """Lee una nota y retorna un preview legible por TTS."""
     err = _check_config()
