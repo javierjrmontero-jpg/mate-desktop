@@ -11,11 +11,14 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "MATE — by JJRM",
-        "width": 1280,
-        "height": 800,
+        "title": "MATE — Consola",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 700,
         "resizable": true,
-        "url": "https://mate.local"
+        "center": true,
+        "url": "https://mate.local/hud"
       }
     ],
     "security": {
