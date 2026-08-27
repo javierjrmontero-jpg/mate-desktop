@@ -22,11 +22,11 @@ from pathlib import Path
 import requests
 
 # ─── Configuración (mismo que 03_service.py) ──────────────────────────────────
-MATE_URL    = "https://mate.local"
+MATE_URL    = "https://mate.molmont.com.ar"
 MATE_USER   = "javierjrmontero@outlook.com"
 MATE_PASSWORD = "Tomy#6358"
 TTS_VOICE   = "es-AR-ElenaNeural"
-VERIFY_SSL  = False
+VERIFY_SSL  = True         # El dominio público tiene certificado válido
 # ──────────────────────────────────────────────────────────────────────────────
 
 

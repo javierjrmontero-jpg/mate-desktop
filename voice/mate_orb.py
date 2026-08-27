@@ -59,7 +59,7 @@ if not os.environ.get("MATE_URL", "").strip():
     except Exception as _e:
         print(f"[MATE] Setup wizard falló: {_e}")
 
-MATE_URL   = os.getenv("MATE_URL", "https://mate.local")
+MATE_URL   = os.getenv("MATE_URL", "https://mate.molmont.com.ar")
 # CRIT-2: TLS verification. Por defecto True (CAs del sistema).
 # Setear MATE_TLS_VERIFY a la ruta de un .crt para cert pinning,
 # o a "false" solo en entornos de desarrollo local con cert autofirmado.

@@ -4,8 +4,8 @@
   "version": "0.1.1",
   "identifier": "com.jjrm.mate",
   "build": {
-    "devUrl": "https://mate.local",
-    "frontendDist": "https://mate.local"
+    "devUrl": "https://mate.molmont.com.ar",
+    "frontendDist": "https://mate.molmont.com.ar"
   },
   "app": {
     "withGlobalTauri": true,
@@ -19,7 +19,7 @@
         "resizable": true,
         "center": true,
         "decorations": false,
-        "url": "https://mate.local/hud"
+        "url": "https://mate.molmont.com.ar/hud"
       }
     ],
     "security": {

@@ -4,7 +4,7 @@
   "description": "Capability for the main window",
   "windows": ["main"],
   "remote": {
-    "urls": ["https://mate.local/*"]
+    "urls": ["https://mate.molmont.com.ar/*"]
   },
   "permissions": [
     "core:default",

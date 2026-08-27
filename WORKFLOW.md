@@ -61,7 +61,7 @@ El puerto **27125** no es arbitrario: Obsidian Local REST API ocupa 27123 y 2712
 ## Cosas que muerden
 
 - **Cloudflare devuelve 403 a clientes programáticos** en `mate.molmont.com.ar`.
-  El orbe usa `mate.local` (LAN) justamente por eso.
+  El orbe usa `mate.molmont.com.ar` (LAN) justamente por eso.
 - **Cerrar el orbe antes de buildear**: si no, `Remove-Item` falla sobre `dist\MATE`.
 - **Modelo STT**: la constante `WHISPER_MODEL` en `mate_orb.py` es la fuente única.
   `model_integrity.py` guarda hashes por tamaño de modelo, así que cambiarlo no dispara

@@ -291,7 +291,7 @@ class _SetupDialog:
         import webbrowser
         from PyQt6.QtCore import QTimer
 
-        url = self._url.text().strip() or os.environ.get("MATE_URL", "https://mate.local")
+        url = self._url.text().strip() or os.environ.get("MATE_URL", "https://mate.molmont.com.ar")
         webbrowser.open(f"{url}/login")
 
         self._login_status.setStyleSheet("color: #aaa; font-size: 11px;")
@@ -322,7 +322,7 @@ class _SetupDialog:
         self._poll.start(1000)
 
     def _do_login(self):
-        url      = self._url.text().strip() or os.environ.get("MATE_URL", "https://mate.local")
+        url      = self._url.text().strip() or os.environ.get("MATE_URL", "https://mate.molmont.com.ar")
         email    = self._email.text().strip()
         password = self._password.text()
         if not email or not password:

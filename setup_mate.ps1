@@ -68,7 +68,7 @@ if (Test-Path $EnvFile) {
     Write-Host "  ¿Estás en la misma red que la VM (red local)? [s/N]" -ForegroundColor Cyan
     $local = Read-Host "  Respuesta"
     if ($local -match "^[sS]$") {
-        $mateUrl = "https://mate.local"
+        $mateUrl = "https://mate.molmont.com.ar"
     } else {
         $mateUrl = "https://molmont.duckdns.org"
     }

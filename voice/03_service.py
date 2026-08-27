@@ -46,7 +46,7 @@ except ImportError:
     _EDGE_TTS_AVAILABLE = False
 
 # ─── Configuración — EDITAR ANTES DE USAR ─────────────────────────────────────
-MATE_URL       = "https://mate.local"         # o IP Tailscale: https://100.74.230.46
+MATE_URL       = "https://mate.molmont.com.ar"         # o IP Tailscale: https://100.74.230.46
 MATE_USER      = "javierjrmontero@outlook.com"
 MATE_PASSWORD  = "Tomy#6358"   # se usa solo para obtener el token JWT
 
@@ -60,7 +60,7 @@ COMMAND_DURATION    = 5.0     # máx segundos de grabación
 SILENCE_THRESHOLD   = 0.015   # amplitud RMS para detectar silencio
 SILENCE_DURATION    = 1.5     # segundos de silencio antes de cortar
 
-VERIFY_SSL     = False        # False: ignorar cert autofirmado de mate.local
+VERIFY_SSL     = True         # El dominio público tiene certificado válido
 
 # ─── Verificación de hablante (resemblyzer) ───────────────────────────────────
 SPEAKER_VERIFICATION = True   # False: deshabilitar completamente la verificación

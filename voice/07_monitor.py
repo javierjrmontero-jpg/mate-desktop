@@ -25,11 +25,11 @@ import json
 import requests
 
 # ─── Configuración ────────────────────────────────────────────────────────────
-MATE_URL      = "https://mate.local"
+MATE_URL      = "https://mate.molmont.com.ar"
 MATE_USER     = "javierjrmontero@outlook.com"
 MATE_PASSWORD = "Tomy#6358"
 TTS_VOICE     = "es-AR-ElenaNeural"
-VERIFY_SSL    = False
+VERIFY_SSL    = True         # El dominio público tiene certificado válido
 
 ORBE_QUEUE_FILE = Path(__file__).parent / ".mate_queue.json"
 POLL_INTERVAL       = 300    # segundos entre chequeos (5 min)

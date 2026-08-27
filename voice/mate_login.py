@@ -6,7 +6,7 @@ Uso: python mate_login.py
 import os, getpass, json
 import urllib.request, urllib.error, ssl
 
-MATE_URL = os.getenv("MATE_URL", "https://mate.local")
+MATE_URL = os.getenv("MATE_URL", "https://mate.molmont.com.ar")
 
 def login(email: str, password: str) -> str:
     payload = json.dumps({"email": email, "password": password}).encode()
