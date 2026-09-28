@@ -852,7 +852,13 @@ class VoiceWorker(QThread):
         import sounddevice as sd
         import queue as _queue
 
-        BARGE_THRESHOLD = 600   # más alto que THRESHOLD de captura para evitar eco del TTS
+        # El umbral se calibra en cada respuesta: los primeros CALIBRA_FRAMES
+        # miden cuánto del propio TTS vuelve por el micrófono. Con auriculares
+        # ese piso es casi nulo y el umbral queda sensible; con parlantes sube
+        # por encima del eco. Un valor fijo servía para un caso y rompía el otro.
+        BARGE_MIN       = 350   # piso sin eco (auriculares), sobre THRESHOLD=250
+        BARGE_FACTOR    = 1.8   # margen sobre el eco medido
+        CALIBRA_FRAMES  = 6     # ~0.5 s a 80 ms por frame
         CONFIRM_FRAMES  = 4     # frames consecutivos requeridos para confirmar intención
 
         q = _queue.Queue()
@@ -860,6 +866,9 @@ class VoiceWorker(QThread):
             q.put(indata.copy())
 
         consecutive = 0
+        frames      = 0
+        eco_pico    = 0.0
+        umbral      = BARGE_MIN
         try:
             with sd.InputStream(samplerate=native_sr, channels=1, dtype="int16",
                                 blocksize=int(1280 * native_sr / 16000), callback=_cb):
@@ -867,10 +876,19 @@ class VoiceWorker(QThread):
                     try:
                         chunk = q.get(timeout=0.4)
                         rms = np.abs(chunk.flatten()).mean()
-                        if rms > BARGE_THRESHOLD:
+                        frames += 1
+
+                        if frames <= CALIBRA_FRAMES:
+                            eco_pico = max(eco_pico, rms)
+                            if frames == CALIBRA_FRAMES:
+                                umbral = max(BARGE_MIN, eco_pico * BARGE_FACTOR)
+                                logger.info(f"[Barge-in] eco {eco_pico:.0f} → umbral {umbral:.0f}")
+                            continue
+
+                        if rms > umbral:
                             consecutive += 1
                             if consecutive >= CONFIRM_FRAMES:
-                                logger.info(f"Barge-in confirmado (RMS {rms:.0f})")
+                                logger.info(f"Barge-in confirmado (RMS {rms:.0f} > {umbral:.0f})")
                                 self._barge_in.set()
                                 return
                         else:
@@ -878,7 +896,9 @@ class VoiceWorker(QThread):
                     except _queue.Empty:
                         consecutive = 0
         except Exception as e:
-            logger.debug(f"Barge-in monitor no disponible: {e}")
+            # En warning y no debug: si el dispositivo está ocupado el barge-in
+            # queda inerte y sin este aviso no habría rastro de por qué.
+            logger.warning(f"Barge-in monitor no disponible: {e}")
 
 
 # ---------------------------------------------------------------------------
